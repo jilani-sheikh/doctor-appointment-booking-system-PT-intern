@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AuthButton } from "./auth-button";
+import { SignOutButton } from "@/components/auth/sign-out-button";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -8,17 +9,28 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { Activity, Menu, Stethoscope } from "lucide-react";
+import { Activity, Menu, Stethoscope, LayoutDashboard } from "lucide-react";
+import type { Role } from "@/generated/prisma/client";
 
 interface NavbarProps {
   user?: {
     name?: string | null;
     email?: string | null;
     image?: string | null;
+    role?: Role | null;
   } | null;
 }
 
 export function Navbar({ user }: NavbarProps) {
+  const dashboardUrl =
+    user?.role === "PATIENT"
+      ? "/patient/dashboard"
+      : user?.role === "DOCTOR"
+      ? "/doctor/dashboard"
+      : user?.role === "ADMIN"
+      ? "/admin/dashboard"
+      : "/onboarding";
+
   const navLinks = [
     { href: "/", label: "Home" },
     { href: "/doctors", label: "Find Doctors" },
@@ -49,6 +61,51 @@ export function Navbar({ user }: NavbarProps) {
               {link.label}
             </Link>
           ))}
+          {user && (
+            <Link
+              href={dashboardUrl}
+              className="text-sm font-semibold text-primary hover:text-primary/80 transition-colors flex items-center gap-1.5"
+            >
+              <LayoutDashboard className="h-4 w-4" />
+              <span>Dashboard</span>
+            </Link>
+          )}
+
+          {/* Role-specific Desktop Navigation */}
+          {user?.role === "PATIENT" && (
+            <Link
+              href="/patient/appointments"
+              className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+            >
+              Appointments
+            </Link>
+          )}
+
+          {user?.role === "DOCTOR" && (
+            <>
+              <Link
+                href="/doctor/appointments"
+                className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+              >
+                Appointments
+              </Link>
+              <Link
+                href="/doctor/slots"
+                className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+              >
+                Slots
+              </Link>
+            </>
+          )}
+
+          {user?.role === "ADMIN" && (
+            <Link
+              href="/admin/doctors"
+              className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+            >
+              Doctor Verifications
+            </Link>
+          )}
         </nav>
 
         {/* Right Section: Auth & Mobile Menu */}
@@ -82,13 +139,74 @@ export function Navbar({ user }: NavbarProps) {
                       {link.label}
                     </Link>
                   ))}
-                  <div className="pt-4 border-t border-border">
+
+                  {user?.role === "PATIENT" && (
+                    <Link
+                      href="/patient/appointments"
+                      className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
+                    >
+                      Appointments
+                    </Link>
+                  )}
+
+                  {user?.role === "DOCTOR" && (
+                    <>
+                      <Link
+                        href="/doctor/appointments"
+                        className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
+                      >
+                        Appointments
+                      </Link>
+                      <Link
+                        href="/doctor/slots"
+                        className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
+                      >
+                        Slots
+                      </Link>
+                    </>
+                  )}
+
+                  {user?.role === "ADMIN" && (
+                    <Link
+                      href="/admin/doctors"
+                      className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
+                    >
+                      Doctor Verifications
+                    </Link>
+                  )}
+
+                  {user && (
+                    <Link
+                      href={dashboardUrl}
+                      className="text-base font-semibold text-primary py-2 px-1 rounded-md transition-colors flex items-center gap-2"
+                    >
+                      <LayoutDashboard className="h-4 w-4" />
+                      <span>My Dashboard</span>
+                    </Link>
+                  )}
+                  <div className="pt-4 border-t border-border space-y-2">
                     <Link
                       href="/book"
                       className="inline-flex w-full items-center justify-center rounded-md bg-secondary text-secondary-foreground text-sm font-semibold py-2.5 hover:bg-secondary/80 transition-colors"
                     >
                       Book Appointment
                     </Link>
+
+                    {user ? (
+                      <div className="pt-2">
+                        <SignOutButton
+                          variant="outline"
+                          className="w-full justify-center text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/20"
+                        />
+                      </div>
+                    ) : (
+                      <Link
+                        href="/sign-in"
+                        className="inline-flex w-full items-center justify-center rounded-md bg-primary text-primary-foreground text-sm font-semibold py-2.5 hover:bg-primary/90 transition-colors"
+                      >
+                        Sign In
+                      </Link>
+                    )}
                   </div>
                 </div>
               </SheetContent>

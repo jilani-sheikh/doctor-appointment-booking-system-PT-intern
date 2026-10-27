@@ -7,14 +7,47 @@ generator client {
   output   = "../src/generated/prisma"
 }
 
+enum Role {
+  PATIENT
+  DOCTOR
+  ADMIN
+}
+
+enum DoctorStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SlotStatus {
+  AVAILABLE
+  BOOKED
+  BLOCKED
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
 model User {
   id            String    @id @default(cuid())
   name          String?
   email         String?   @unique
   emailVerified DateTime? @map("email_verified")
   image         String?
+  role          Role?
+  passwordHash  String?   @map("password_hash")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
   accounts      Account[]
   sessions      Session[]
+  patient       Patient?
+  doctor        Doctor?
 
   @@map("users")
 }
@@ -56,4 +89,70 @@ model VerificationToken {
 
   @@unique([identifier, token])
   @@map("verification_tokens")
+}
+
+model Patient {
+  id          String        @id @default(cuid())
+  userId      String        @unique @map("user_id")
+  dateOfBirth DateTime?     @map("date_of_birth") @db.Date
+  gender      String?
+  phone       String?
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+
+  @@map("patients")
+}
+
+model Doctor {
+  id              String         @id @default(cuid())
+  userId          String         @unique @map("user_id")
+  specialization  String
+  qualification   String?
+  consultationFee Decimal        @map("consultation_fee") @db.Decimal(10, 2)
+  bio             String?        @db.Text
+  experienceYears Int?           @map("experience_years")
+  status          DoctorStatus   @default(PENDING)
+  isDemo          Boolean        @default(false) @map("is_demo")
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  availabilities Availability[]
+
+  @@map("doctors")
+}
+
+model Availability {
+  id        String     @id @default(cuid())
+  doctorId  String     @map("doctor_id")
+  startTime DateTime   @map("start_time")
+  endTime   DateTime   @map("end_time")
+  status    SlotStatus @default(AVAILABLE)
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  doctor       Doctor        @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+
+  @@unique([doctorId, startTime])
+  @@index([doctorId, startTime])
+  @@map("availabilities")
+}
+
+model Appointment {
+  id             String            @id @default(cuid())
+  patientId      String            @map("patient_id")
+  availabilityId String            @map("availability_id")
+  reason         String?           @db.Text
+  status         AppointmentStatus @default(PENDING)
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+  cancelledAt    DateTime?         @map("cancelled_at")
+
+  patient      Patient      @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  availability Availability @relation(fields: [availabilityId], references: [id], onDelete: Restrict)
+
+  @@index([patientId])
+  @@index([availabilityId])
+  @@map("appointments")
 }
