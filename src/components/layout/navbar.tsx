@@ -109,14 +109,7 @@ export function Navbar({ user }: NavbarProps) {
         </nav>
 
         {/* Right Section: Auth & Mobile Menu */}
-        <div className="flex items-center gap-2.5">
-          {user && (
-            <SignOutButton
-              variant="outline"
-              size="sm"
-              className="hidden sm:inline-flex text-muted-foreground hover:text-destructive hover:bg-destructive/10 border-border/80"
-            />
-          )}
+        <div className="flex items-center gap-3">
           <AuthButton user={user} />
 
           {/* Mobile Navigation Drawer */}

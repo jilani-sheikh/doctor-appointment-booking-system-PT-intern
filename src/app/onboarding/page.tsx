@@ -1,7 +1,6 @@
 import { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getCurrentUser, isProfileComplete, getPostLoginRedirect } from "@/lib/auth";
-import { SignOutButton } from "@/components/auth/sign-out-button";
 import { OnboardingFlow } from "./onboarding-flow";
 
 export const metadata: Metadata = {
@@ -23,21 +22,8 @@ export default async function OnboardingPage() {
   }
 
   return (
-    <div className="flex-1 py-12 px-4 sm:px-6 lg:px-8 flex flex-col items-center justify-center space-y-4">
+    <div className="flex-1 py-12 px-4 sm:px-6 lg:px-8 flex items-center justify-center">
       <OnboardingFlow userName={user.name} />
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span>
-          Signed in as <strong className="text-foreground">{user.email ?? user.name}</strong>
-        </span>
-        <span>•</span>
-        <SignOutButton
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-        >
-          Sign out
-        </SignOutButton>
-      </div>
     </div>
   );
 }

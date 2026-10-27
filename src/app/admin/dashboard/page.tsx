@@ -6,7 +6,6 @@ import { db } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { SignOutButton } from "@/components/auth/sign-out-button";
 import {
   Table,
   TableBody,
@@ -141,7 +140,7 @@ export default async function AdminDashboardPage() {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-3">
           <Link
             href="/admin/doctors"
             className={buttonVariants({ className: "gap-1.5 shadow-xs" })}
@@ -149,11 +148,6 @@ export default async function AdminDashboardPage() {
             <Stethoscope className="h-4 w-4" />
             Doctor Verifications ({pendingDoctors})
           </Link>
-          <SignOutButton
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-          />
         </div>
       </div>
 
