@@ -3,6 +3,8 @@ import { requireRole } from "@/lib/auth";
 import { Role, DoctorStatus } from "@/generated/prisma/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertCircle, CheckCircle2, Clock, Calendar, Stethoscope, Briefcase } from "lucide-react";
+import Link from "next/link";
+import { buttonVariants } from "@/components/ui/button";
 
 export const metadata: Metadata = {
   title: "Doctor Dashboard — Medrella",
@@ -112,7 +114,7 @@ export default async function DoctorDashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Slot Management Shell */}
+        {/* Slot Management Card */}
         <Card className="md:col-span-2 shadow-sm border-border bg-card flex flex-col justify-between">
           <div>
             <CardHeader>
@@ -121,35 +123,48 @@ export default async function DoctorDashboardPage() {
                   <Calendar className="h-4 w-4 text-primary" />
                   Availability Slots
                 </CardTitle>
-                <span className="text-[11px] font-medium bg-muted text-muted-foreground px-2 py-0.5 rounded">
-                  Coming soon (Phase 3)
-                </span>
+                <Link
+                  href="/doctor/slots"
+                  className={buttonVariants({ size: "sm", variant: "default" })}
+                >
+                  Manage Slots
+                </Link>
               </div>
               <CardDescription className="text-xs">
                 Manage your weekly consultation hours and appointment slots
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="rounded-lg border border-dashed border-border p-8 text-center space-y-3 bg-muted/20">
+              <div className="rounded-lg border border-border p-6 text-center space-y-3 bg-muted/10">
                 <div className="h-10 w-10 rounded-full bg-primary/10 text-primary mx-auto flex items-center justify-center">
                   <Briefcase className="h-5 w-5" />
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">
-                    Slot Management Architecture Coming in Phase 3
+                    Doctor Slot Management
                   </h3>
                   <p className="text-xs text-muted-foreground max-w-sm mx-auto mt-1">
-                    Doctor schedule generation, 30-minute slot creation, and manual slot blocking
-                    will be implemented in Phase 3.
+                    Bulk-generate consultation slots, customize working days and durations, and block hours directly.
                   </p>
+                </div>
+                <div className="pt-2">
+                  <Link
+                    href="/doctor/slots"
+                    className={buttonVariants({ variant: "outline", size: "sm" })}
+                  >
+                    Open Slot Manager →
+                  </Link>
                 </div>
               </div>
             </CardContent>
           </div>
-          <div className="p-6 pt-0 border-t border-border mt-6">
+          <div className="p-6 pt-0 border-t border-border mt-6 flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
               Approval Status: <span className="font-semibold text-foreground">{doctor?.status}</span>
             </p>
+            <Link href="/doctor/appointments" className="text-xs text-primary font-medium hover:underline">
+              View Appointments →
+            </Link>
           </div>
         </Card>
       </div>

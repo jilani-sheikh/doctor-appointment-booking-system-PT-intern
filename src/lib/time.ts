@@ -94,3 +94,51 @@ export function getTomorrowIST(): { year: number; month: number; day: number; da
     dayOfWeek: istNow.getUTCDay(), // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
   };
 }
+
+/**
+ * Returns today's date in YYYY-MM-DD format in IST timezone.
+ */
+export function getTodayISTDateString(): string {
+  const now = new Date();
+  const istNow = new Date(now.getTime() + IST_OFFSET_MS);
+  const year = istNow.getUTCFullYear();
+  const month = String(istNow.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(istNow.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Returns a Date's date string in YYYY-MM-DD format in IST.
+ */
+export function getISTDateString(date: Date | string | number): string {
+  const d = typeof date === "string" || typeof date === "number" ? new Date(date) : date;
+  const istDate = new Date(d.getTime() + IST_OFFSET_MS);
+  const year = istDate.getUTCFullYear();
+  const month = String(istDate.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(istDate.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Parses a YYYY-MM-DD date string and HH:mm 24-hr time string in IST into a UTC Date.
+ */
+export function parseISTDateTime(dateStr: string, timeStr: string): Date {
+  const [yearStr, monthStr, dayStr] = dateStr.split("-");
+  const [hourStr, minStr] = timeStr.split(":");
+  return createISTDate(
+    parseInt(yearStr, 10),
+    parseInt(monthStr, 10),
+    parseInt(dayStr, 10),
+    parseInt(hourStr, 10),
+    parseInt(minStr, 10)
+  );
+}
+
+/**
+ * Formats a start and end time into an IST time range string.
+ * Example: "10:00 AM - 10:30 AM"
+ */
+export function formatSlotTimeRangeIST(start: Date | string | number, end: Date | string | number): string {
+  return `${formatTimeIST(start)} - ${formatTimeIST(end)}`;
+}
+
