@@ -31,8 +31,8 @@ export async function signInAction() {
 /**
  * Server Action to trigger user sign-out and redirect to home.
  */
-export async function signOutAction() {
-  await signOut({ redirectTo: "/" });
+export async function signOutAction(redirectTo: string = "/") {
+  await signOut({ redirectTo });
 }
 
 /**

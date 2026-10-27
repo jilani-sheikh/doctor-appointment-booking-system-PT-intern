@@ -30,11 +30,11 @@ async function runConcurrentBookingTest() {
 
   try {
     // 1. Verify partial unique index exists
-    const indexes: any = await db.$queryRaw`
+    const indexes = (await db.$queryRaw`
       SELECT indexname, indexdef 
       FROM pg_indexes 
       WHERE tablename = 'appointments' AND indexname = 'appointments_availability_id_active_unique';
-    `;
+    `) as Array<{ indexname: string; indexdef: string }>;
 
     if (!indexes || indexes.length === 0) {
       console.warn("⚠️ Warning: Partial unique index appointments_availability_id_active_unique not found in pg_indexes.");

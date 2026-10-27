@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import { SignOutButton } from "@/components/auth/sign-out-button";
 import { Calendar, User, Clock, ArrowRight } from "lucide-react";
 import { formatDateIST, formatDateTimeIST, formatTimeIST } from "@/lib/time";
 
@@ -81,7 +82,7 @@ export default async function PatientDashboardPage() {
             Manage your medical appointments, consultations, and profile details.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Link
             href="/doctors"
             className={buttonVariants({ variant: "default", className: "shadow-sm flex items-center" })}
@@ -96,6 +97,11 @@ export default async function PatientDashboardPage() {
             <Clock className="h-4 w-4 mr-2" />
             My Consultations
           </Link>
+          <SignOutButton
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+          />
         </div>
       </div>
 

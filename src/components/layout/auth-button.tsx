@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { signOutAction } from "@/lib/actions/auth";
 import { buttonVariants } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -12,8 +11,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { LogIn, LogOut, LayoutDashboard, Shield, Stethoscope, User as UserIcon } from "lucide-react";
-import { useTransition } from "react";
+import { SignOutButton } from "@/components/auth/sign-out-button";
+import { LogIn, LayoutDashboard, Shield, Stethoscope, User as UserIcon } from "lucide-react";
 import type { Role } from "@/generated/prisma/client";
 
 interface AuthButtonProps {
@@ -26,8 +25,6 @@ interface AuthButtonProps {
 }
 
 export function AuthButton({ user }: AuthButtonProps) {
-  const [isPending, startTransition] = useTransition();
-
   if (!user) {
     return (
       <Link
@@ -120,22 +117,7 @@ export function AuthButton({ user }: AuthButtonProps) {
           <span>{user.role ? "Dashboard" : "Complete Profile"}</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator className="my-1 border-border" />
-        <form
-          action={() => {
-            startTransition(async () => {
-              await signOutAction();
-            });
-          }}
-        >
-          <button
-            type="submit"
-            disabled={isPending}
-            className="w-full flex items-center gap-2 px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10 rounded-sm cursor-pointer transition-colors"
-          >
-            <LogOut className="h-4 w-4" />
-            <span>{isPending ? "Signing out..." : "Sign Out"}</span>
-          </button>
-        </form>
+        <SignOutButton variant="dropdown" />
       </DropdownMenuContent>
     </DropdownMenu>
   );

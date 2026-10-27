@@ -5,6 +5,7 @@ import { Role, DoctorStatus, AppointmentStatus, SlotStatus } from "@/generated/p
 import { db } from "@/lib/db";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
+import { SignOutButton } from "@/components/auth/sign-out-button";
 import { AlertCircle, CheckCircle2, Clock, Calendar, Stethoscope, Briefcase, Users, ArrowRight } from "lucide-react";
 import { getTodayISTDateString, getISTDateString } from "@/lib/time";
 
@@ -132,24 +133,31 @@ export default async function DoctorDashboardPage() {
           </p>
         </div>
 
-        {isApproved && (
-          <div className="flex items-center gap-3">
-            <Link
-              href="/doctor/slots"
-              className={buttonVariants({ variant: "default", size: "sm", className: "gap-1.5" })}
-            >
-              <Calendar className="h-4 w-4" />
-              Manage Slots
-            </Link>
-            <Link
-              href="/doctor/appointments"
-              className={buttonVariants({ variant: "outline", size: "sm", className: "gap-1.5" })}
-            >
-              <Users className="h-4 w-4" />
-              Consultations
-            </Link>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {isApproved && (
+            <>
+              <Link
+                href="/doctor/slots"
+                className={buttonVariants({ variant: "default", size: "sm", className: "gap-1.5" })}
+              >
+                <Calendar className="h-4 w-4" />
+                Manage Slots
+              </Link>
+              <Link
+                href="/doctor/appointments"
+                className={buttonVariants({ variant: "outline", size: "sm", className: "gap-1.5" })}
+              >
+                <Users className="h-4 w-4" />
+                Consultations
+              </Link>
+            </>
+          )}
+          <SignOutButton
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+          />
+        </div>
       </div>
 
       {/* Stats Cards (Milestone 4) */}

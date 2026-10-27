@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AuthButton } from "./auth-button";
+import { SignOutButton } from "@/components/auth/sign-out-button";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -183,13 +184,29 @@ export function Navbar({ user }: NavbarProps) {
                       <span>My Dashboard</span>
                     </Link>
                   )}
-                  <div className="pt-4 border-t border-border">
+                  <div className="pt-4 border-t border-border space-y-2">
                     <Link
                       href="/book"
                       className="inline-flex w-full items-center justify-center rounded-md bg-secondary text-secondary-foreground text-sm font-semibold py-2.5 hover:bg-secondary/80 transition-colors"
                     >
                       Book Appointment
                     </Link>
+
+                    {user ? (
+                      <div className="pt-2">
+                        <SignOutButton
+                          variant="outline"
+                          className="w-full justify-center text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/20"
+                        />
+                      </div>
+                    ) : (
+                      <Link
+                        href="/sign-in"
+                        className="inline-flex w-full items-center justify-center rounded-md bg-primary text-primary-foreground text-sm font-semibold py-2.5 hover:bg-primary/90 transition-colors"
+                      >
+                        Sign In
+                      </Link>
+                    )}
                   </div>
                 </div>
               </SheetContent>
