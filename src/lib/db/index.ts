@@ -1,37 +1,44 @@
 import "server-only";
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
-import { drizzle, type NeonHttpDatabase } from "drizzle-orm/neon-http";
-import * as schema from "./schema";
+import { neonConfig } from "@neondatabase/serverless";
+import { PrismaNeon } from "@prisma/adapter-neon";
+import { PrismaClient } from "@/generated/prisma/client";
 import { getDatabaseUrl } from "@/lib/env";
+import ws from "ws";
 
-type NeonClient = NeonQueryFunction<false, false>;
+// Configure Neon to use WebSocket constructor in Node.js runtime
+neonConfig.webSocketConstructor = ws;
 
-let cachedNeon: NeonClient | null = null;
+declare global {
+  var __medrella_prisma: PrismaClient | undefined;
+}
 
-function getNeonClient(): NeonClient {
-  if (!cachedNeon) {
-    const url = getDatabaseUrl();
-    cachedNeon = neon(url);
+function createPrismaClient(): PrismaClient {
+  const connectionString = getDatabaseUrl();
+  const adapter = new PrismaNeon({ connectionString });
+  return new PrismaClient({ adapter });
+}
+
+function getPrismaInstance(): PrismaClient {
+  if (process.env.NODE_ENV === "production") {
+    return createPrismaClient();
   }
-  return cachedNeon;
+  if (!globalThis.__medrella_prisma) {
+    globalThis.__medrella_prisma = createPrismaClient();
+  }
+  return globalThis.__medrella_prisma;
 }
 
 /**
- * Lazy Neon query function.
- * Evaluates DATABASE_URL and initializes the HTTP client only when
- * an actual SQL query is dispatched to the database.
+ * Lazy Server-Only Database Client.
+ *
+ * Utilizes a JavaScript Proxy so that merely importing `db` does NOT evaluate
+ * DATABASE_URL or instantiate PrismaClient at module load time or during static Next.js compilation.
+ * The environment variable and database client are only initialized when an actual
+ * database operation is performed.
  */
-const lazyQueryClient: NeonClient = ((
-  ...args: Parameters<NeonClient>
-): ReturnType<NeonClient> => {
-  const client = getNeonClient();
-  return Reflect.apply(client, undefined, args);
-}) as NeonClient;
-
-/**
- * Reusable server-only Drizzle database client.
- * Compatible with Drizzle's PgDatabase check and Auth.js Drizzle adapter.
- */
-export const db: NeonHttpDatabase<typeof schema> = drizzle(lazyQueryClient, { schema });
-
-export { schema };
+export const db: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    const client = getPrismaInstance();
+    return Reflect.get(client, prop);
+  },
+});

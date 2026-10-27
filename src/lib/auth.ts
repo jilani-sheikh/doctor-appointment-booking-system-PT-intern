@@ -1,20 +1,14 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
-import { DrizzleAdapter } from "@auth/drizzle-adapter";
+import { PrismaAdapter } from "@auth/prisma-adapter";
 import { db } from "@/lib/db";
-import { users, accounts, sessions, verificationTokens } from "@/lib/db/schema";
 import { getAuthSecret } from "@/lib/env";
 import { redirect } from "next/navigation";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: DrizzleAdapter(db, {
-    usersTable: users,
-    accountsTable: accounts,
-    sessionsTable: sessions,
-    verificationTokensTable: verificationTokens,
-  }),
+  adapter: PrismaAdapter(db),
   session: {
-    // Fast, edge-friendly JWT session strategy. Drizzle adapter persists users/accounts on login.
+    // Fast, edge-friendly JWT session strategy. Prisma adapter persists users/accounts on login.
     strategy: "jwt",
   },
   secret: getAuthSecret(),

@@ -8,10 +8,18 @@ import { z } from "zod";
 const envSchema = z.object({
   DATABASE_URL: z
     .string({
-      required_error: "Missing required environment variable: DATABASE_URL. Please set DATABASE_URL in your .env.local file (from your Neon PostgreSQL console).",
+      required_error: "Missing required environment variable: DATABASE_URL. Please set DATABASE_URL (Neon pooled connection string) in your .env.local file.",
     })
     .min(1, "DATABASE_URL cannot be empty")
     .url("DATABASE_URL must be a valid PostgreSQL connection URL"),
+
+  DIRECT_URL: z
+    .string({
+      required_error: "Missing required environment variable: DIRECT_URL. Please set DIRECT_URL (Neon direct connection string) in your .env.local file.",
+    })
+    .min(1, "DIRECT_URL cannot be empty")
+    .url("DIRECT_URL must be a valid PostgreSQL connection URL")
+    .optional(),
 
   AUTH_SECRET: z
     .string({
@@ -55,7 +63,7 @@ export function isAuthConfigured(): boolean {
 }
 
 /**
- * Lazily retrieves and validates DATABASE_URL.
+ * Lazily retrieves and validates DATABASE_URL (pooled runtime connection).
  * Throws a descriptive, actionable error naming the variable if missing.
  */
 export function getDatabaseUrl(): string {
@@ -63,6 +71,22 @@ export function getDatabaseUrl(): string {
   if (!result.success) {
     const errorMsg = result.error.errors[0]?.message ?? "Invalid DATABASE_URL";
     throw new Error(`[Medrella Config Error] Missing or invalid variable: DATABASE_URL\n${errorMsg}`);
+  }
+  return result.data;
+}
+
+/**
+ * Lazily retrieves and validates DIRECT_URL (direct non-pooled migration connection).
+ * Required for executing Prisma migrations.
+ */
+export function getDirectUrl(): string {
+  const result = envSchema.shape.DIRECT_URL.unwrap().safeParse(process.env.DIRECT_URL);
+  if (!result.success || !process.env.DIRECT_URL) {
+    throw new Error(
+      "[Medrella Config Error] Missing required environment variable: DIRECT_URL\n" +
+      "Prisma migrations must be executed over Neon's direct (non-pooled) connection.\n" +
+      "Please set DIRECT_URL in your .env.local file (from your Neon console)."
+    );
   }
   return result.data;
 }

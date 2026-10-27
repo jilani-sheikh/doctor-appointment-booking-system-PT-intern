@@ -11,7 +11,7 @@ Developed as part of the PearlThoughts internship programme.
 Medrella aims to provide a reliable, modern healthcare platform for managing users, patient profiles, doctor profiles, availability slots, and appointment workflows.
 
 The application supports:
-- **Phase 1 (Completed):** Secure project foundation, light healthcare design system, database migration infrastructure, and Google OAuth via Auth.js v5.
+- **Phase 1 (Completed):** Secure project foundation, light healthcare design system, Prisma ORM database migration infrastructure with Neon PostgreSQL, and Google OAuth via Auth.js v5.
 - **Future Phases:** Role-based access (patients/doctors), availability slot management, appointment booking lifecycle, notifications, and payments.
 
 ---
@@ -26,27 +26,34 @@ The application supports:
 | **Tailwind CSS** | Styling engine with `@tailwindcss/postcss` | `^4` |
 | **shadcn/ui** | Accessible UI primitives (Button, Avatar, Card, DropdownMenu, Sheet) | `4.23.0` |
 | **PostgreSQL on Neon** | Serverless relational database via `@neondatabase/serverless` | `^1.2.0` |
-| **Drizzle ORM** | Type-safe ORM via `drizzle-orm/neon-http` & `drizzle-kit` | `0.45.4` / `0.31.11` |
-| **Auth.js (NextAuth v5)** | Authentication with `@auth/drizzle-adapter` & Google OAuth | `5.0.0-beta.32` |
+| **Prisma ORM** | Next-generation ORM with Neon Driver Adapter | `7.10.1` |
+| **@prisma/adapter-neon** | Official Prisma driver adapter for Neon Serverless | `7.10.1` |
+| **Auth.js (NextAuth v5)** | Authentication with `@auth/prisma-adapter` & Google OAuth | `5.0.0-beta.32` |
 | **Zod** | Lazy runtime environment validation & schemas | `^3.24.2` |
 
 ---
 
 ## 🏗️ Architectural Decisions
 
-### 1. JWT Session Strategy with Drizzle Adapter
-Medrella configures Auth.js v5 with `session: { strategy: "jwt" }` combined with `@auth/drizzle-adapter`:
-- **Account Persistence:** On successful Google OAuth sign-in, Auth.js creates and links the user and account records in Neon PostgreSQL via the Drizzle adapter.
+### 1. JWT Session Strategy with Prisma Adapter
+Medrella configures Auth.js v5 with `session: { strategy: "jwt" }` combined with `@auth/prisma-adapter`:
+- **Account Persistence:** On successful Google OAuth sign-in, Auth.js creates and links the user and account records in Neon PostgreSQL via the Prisma adapter.
 - **Performance & Edge-Friendliness:** Instead of making blocking database round-trips on every page navigation to inspect a database session row, the session state is cryptographically signed and stored in a secure cookie.
 - **Zero-Credential Builds:** Public landing pages render without database queries, keeping the application fast, resilient, and cost-effective.
 
-### 2. Lazy Environment Validation
+### 2. Neon Pooled vs. Direct Connection Strings
+Prisma and Neon recommend two distinct connection strings:
+- **`DATABASE_URL` (Pooled Connection)**: Used at application runtime by `@prisma/adapter-neon`. Connects to Neon's PgBouncer/WebSocket connection pooler (host containing `-pooler`) to prevent connection exhaustion in serverless environments.
+- **`DIRECT_URL` (Direct Connection)**: Used exclusively by the Prisma CLI for migrations (`npm run db:migrate`, `npm run db:deploy`). Prisma migrations require non-pooled direct connections to support advisory locks and transaction statements.
+
+### 3. Lazy Environment Validation
 All environment variables are validated lazily on demand (`src/lib/env.ts`):
 - `npm run build` and public landing page visits require zero environment variables.
 - When an operation requiring credentials is run (e.g. initiating Google OAuth or running a database query), Zod validates the specific variable and provides an explicit, actionable error message naming the exact missing variable.
+- `prisma.config.ts` strictly prevents migrations from running if `DIRECT_URL` is missing.
 
-### 3. Server-Only Database Client
-The Drizzle client (`src/lib/db/index.ts`) enforces `import "server-only"`. The HTTP client connects to Neon via `@neondatabase/serverless` only when SQL queries are dispatched, avoiding connection pools and preventing database credentials from ever leaking into client bundles.
+### 4. Server-Only Database Client
+The database client (`src/lib/db/index.ts`) enforces `import "server-only"` and uses a lazy singleton pattern on `globalThis`. The `@prisma/adapter-neon` WebSocket connection pool is created only when SQL queries are executed, preventing connection leaks during development hot-reloads and preventing database credentials from ever leaking into client bundles.
 
 ---
 
@@ -54,11 +61,11 @@ The Drizzle client (`src/lib/db/index.ts`) enforces `import "server-only"`. The 
 
 ```text
 Doc_Booking_System/
-├── .env.example              # Environment variables template
-├── .gitignore                # Excludes secrets and build artifacts
+├── .env.example              # Environment variables template (pooled vs direct)
+├── .gitignore                # Excludes secrets, generated client, and build artifacts
 ├── README.md                 # Project documentation and setup guide
 ├── components.json           # shadcn/ui configuration
-├── drizzle.config.ts         # Drizzle Kit configuration (loads .env.local)
+├── prisma.config.ts          # Prisma 7 CLI configuration (loads .env.local, enforces DIRECT_URL)
 ├── next.config.ts            # Next.js configuration (remotePatterns for Google avatars)
 ├── package.json              # Project scripts and dependencies
 ├── postcss.config.mjs        # PostCSS configuration with Tailwind v4
@@ -66,9 +73,15 @@ Doc_Booking_System/
 ├── docs/
 │   ├── Doctor Appointment Booking System.png  # Entity Relationship Diagram
 │   └── doctor-appointment-booking-system.dbml # Editable DBML source
-├── drizzle/                  # Generated SQL migrations
-│   └── 0000_panoramic_shocker.sql
+├── prisma/
+│   ├── schema.prisma         # Prisma schema (Auth.js adapter models)
+│   └── migrations/
+│       ├── migration_lock.toml
+│       └── 20261027000000_init/
+│           └── migration.sql # Initial SQL migration
 └── src/
+    ├── generated/
+    │   └── prisma/           # Generated Prisma Client (git-ignored)
     ├── app/
     │   ├── layout.tsx        # Root layout (Navbar, Footer, SEO metadata)
     │   ├── page.tsx          # Landing page (Hero, Benefits, How It Works)
@@ -88,10 +101,9 @@ Doc_Booking_System/
     │   ├── env.ts            # Lazy Zod environment variable validator
     │   ├── utils.ts          # Classname helper (cn)
     │   ├── actions/
-    │   │   └── auth.ts       # Server actions (signInAction, signOutAction)
+    │   │   └── auth.ts       # Server Actions (signInAction, signOutAction)
     │   └── db/
-    │       ├── index.ts      # Server-only lazy Neon HTTP Drizzle client
-    │       └── schema.ts     # Auth.js Postgres adapter schema
+    │       └── index.ts      # Server-only lazy PrismaClient with Neon driver adapter
     └── types/
         └── next-auth.d.ts    # Module augmentations for NextAuth Session and User
 ```
@@ -103,8 +115,11 @@ Doc_Booking_System/
 Create `.env.local` in the project root:
 
 ```env
-# Neon PostgreSQL connection string (Serverless HTTP)
-DATABASE_URL="postgresql://[user]:[password]@[neon-hostname]/[database]?sslmode=require"
+# Neon PostgreSQL POOLED connection string (Runtime queries via @prisma/adapter-neon)
+DATABASE_URL="postgresql://[user]:[password]@[neon-hostname]-pooler.[region].aws.neon.tech/[database]?sslmode=require"
+
+# Neon PostgreSQL DIRECT connection string (Used exclusively by Prisma CLI for migrations)
+DIRECT_URL="postgresql://[user]:[password]@[neon-hostname].[region].aws.neon.tech/[database]?sslmode=require"
 
 # Auth.js secret (generate using `npx auth secret` or `openssl rand -base64 33`)
 AUTH_SECRET="your-32-char-random-secret"
@@ -125,6 +140,7 @@ AUTH_GOOGLE_SECRET="your-client-secret"
 ```bash
 npm install
 ```
+*(The `postinstall` script automatically runs `prisma generate` to compile the Prisma client to `src/generated/prisma`).*
 
 ### 2. Run Local Development Server
 ```bash
@@ -134,6 +150,9 @@ Open [http://localhost:3000](http://localhost:3000) to view the Medrella landing
 
 ### 3. Verification & Code Quality
 ```bash
+# Generate Prisma Client
+npm run db:generate
+
 # ESLint check (zero errors, zero warnings)
 npm run lint
 
@@ -150,16 +169,31 @@ npm run build
 
 1. Sign up or log into [Neon](https://neon.tech).
 2. Create a new project (e.g. `medrella-db`).
-3. Under **Dashboard > Connection Details**, select **Connection string** (choose **pooled** or **direct**; `@neondatabase/serverless` operates over HTTPS).
-4. Copy the connection string into `.env.local` as `DATABASE_URL`.
-5. Run the database migration script:
+3. Under **Dashboard > Connection Details**:
+   - Check the **Pooled connection** checkbox to copy your **`DATABASE_URL`**.
+   - Uncheck the **Pooled connection** checkbox to copy your direct **`DIRECT_URL`**.
+4. Paste both into `.env.local`:
+   ```env
+   DATABASE_URL="postgresql://...-pooler....neon.tech/neondb?sslmode=require"
+   DIRECT_URL="postgresql://...neon.tech/neondb?sslmode=require"
+   ```
+5. Apply the initial migration to your Neon database:
    ```bash
    npm run db:migrate
    ```
-6. (Optional) Open Drizzle Studio to inspect database records:
+   *(Or in production CI/CD environments: `npm run db:deploy`).*
+6. (Optional) Open Prisma Studio to inspect database records visually:
    ```bash
    npm run db:studio
    ```
+
+---
+
+## ☁️ Vercel Deployment Note
+
+- **Node Version**: Node.js `>=20.0.0` is required (enforced via `"engines"` in `package.json`). Ensure Vercel project settings are configured for Node 20.x or 22.x.
+- **Environment Variables**: Set `DATABASE_URL`, `DIRECT_URL`, `AUTH_SECRET`, `AUTH_GOOGLE_ID`, and `AUTH_GOOGLE_SECRET` in your Vercel Project Settings > Environment Variables.
+- **Prisma Client Build**: The `"postinstall": "prisma generate"` script in `package.json` guarantees that Vercel automatically generates the Prisma Client in `src/generated/prisma` during the deployment build step before Next.js compiles.
 
 ---
 
@@ -171,7 +205,7 @@ npm run build
    - User Type: **External**
    - App name: `Medrella`
    - User support email & Developer contact email: your email
-   - Scopes: `.../auth/userinfo.email`, `.../auth/userinfo.profile`, `openid`
+   - Scopes: `openid`, `.../auth/userinfo.email`, `.../auth/userinfo.profile`
    - Add test users if the app remains in "Testing" mode.
 4. Navigate to **APIs & Services > Credentials > Create Credentials > OAuth client ID**:
    - Application type: **Web application**
@@ -196,8 +230,9 @@ npm run build
 - [x] **Phase 1: Project Setup and Secure Foundation**
   - [x] Next.js 16 App Router + TypeScript + Tailwind CSS v4 setup.
   - [x] shadcn/ui component integration.
-  - [x] Neon PostgreSQL + Drizzle ORM client & migration files generated.
-  - [x] Auth.js v5 (NextAuth beta) with Google provider & Drizzle adapter.
+  - [x] Neon PostgreSQL + Prisma ORM 7 setup with `@prisma/adapter-neon`.
+  - [x] Initial timestamped migration file generated (`prisma/migrations/20261027000000_init`).
+  - [x] Auth.js v5 with Google provider & `@auth/prisma-adapter`.
   - [x] Lazy Zod environment validation (zero-credential build support).
   - [x] Responsive healthcare landing page with "Coming soon" placeholders.
 - [ ] **Phase 2: User Profiles & Roles** (Patients, Doctors, Admin).
