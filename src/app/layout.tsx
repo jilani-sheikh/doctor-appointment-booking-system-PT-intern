@@ -15,7 +15,12 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const user = await getCurrentUser();
+  let user = null;
+  try {
+    user = await getCurrentUser();
+  } catch (err) {
+    console.warn("[RootLayout] Failed to resolve current user, defaulting to null:", err);
+  }
 
   return (
     <html lang="en" className="h-full">

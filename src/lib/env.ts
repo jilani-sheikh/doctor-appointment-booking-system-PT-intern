@@ -40,6 +40,8 @@ const envSchema = z.object({
     .min(1, "AUTH_GOOGLE_SECRET cannot be empty"),
 
   AUTH_URL: z.string().url().optional(),
+
+  ADMIN_EMAILS: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -134,6 +136,28 @@ export function getGoogleCredentials(): { clientId: string; clientSecret: string
     clientId: idResult.data,
     clientSecret: secretResult.data,
   };
+}
+
+/**
+ * Lazily retrieves and normalizes configured admin emails.
+ * Splits comma-separated values, trims whitespace, and converts to lowercase.
+ */
+export function getAdminEmails(): string[] {
+  const raw = process.env.ADMIN_EMAILS;
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.length > 0);
+}
+
+/**
+ * Checks whether the given email is configured as an administrator.
+ */
+export function isAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  const normalized = email.trim().toLowerCase();
+  return getAdminEmails().includes(normalized);
 }
 
 /**

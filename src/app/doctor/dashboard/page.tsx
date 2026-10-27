@@ -1,0 +1,158 @@
+import { Metadata } from "next";
+import { requireRole } from "@/lib/auth";
+import { Role, DoctorStatus } from "@/generated/prisma/client";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { AlertCircle, CheckCircle2, Clock, Calendar, Stethoscope, Briefcase } from "lucide-react";
+
+export const metadata: Metadata = {
+  title: "Doctor Dashboard — Medrella",
+  description: "Manage your doctor profile, availability slots, and patient consultations.",
+};
+
+export default async function DoctorDashboardPage() {
+  const user = await requireRole(Role.DOCTOR);
+  const doctor = user.doctor;
+
+  const isPendingApproval = doctor?.status === DoctorStatus.PENDING;
+  const isRejected = doctor?.status === DoctorStatus.REJECTED;
+  const isApproved = doctor?.status === DoctorStatus.APPROVED;
+
+  return (
+    <div className="container mx-auto max-w-5xl px-4 py-8 space-y-6">
+      {/* Status Banners */}
+      {isPendingApproval && (
+        <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 shadow-sm">
+          <Clock className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <h4 className="font-semibold text-sm text-amber-900">
+              Profile Awaiting Administrative Verification
+            </h4>
+            <p className="text-xs text-amber-800 leading-relaxed">
+              Your doctor profile has been submitted and is currently pending verification. While in
+              pending status, patients cannot book consultations with you. In Phase 2, admin verification
+              is managed directly in Prisma Studio.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {isRejected && (
+        <div className="flex items-start gap-3 p-4 rounded-xl border border-destructive/30 bg-destructive/10 text-destructive shadow-sm">
+          <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <h4 className="font-semibold text-sm">Doctor Application Notice</h4>
+            <p className="text-xs leading-relaxed opacity-90">
+              Your profile verification was not approved. Please reach out to administrative support
+              to review your medical credentials.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary uppercase tracking-wider">
+              Doctor Portal
+            </span>
+            {isApproved && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3" /> Verified Doctor
+              </span>
+            )}
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground mt-1">
+            Dr. {user.name ?? "Practitioner"}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {doctor?.specialization} • {doctor?.qualification ?? "Medical Practitioner"}
+          </p>
+        </div>
+      </div>
+
+      {/* Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Practice Overview Card */}
+        <Card className="shadow-sm border-border bg-card">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Stethoscope className="h-4 w-4 text-primary" />
+              Practice Details
+            </CardTitle>
+            <CardDescription className="text-xs">Your clinical profile summary</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div>
+              <p className="text-xs text-muted-foreground">Specialization</p>
+              <p className="font-medium text-foreground">{doctor?.specialization ?? "—"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Qualification</p>
+              <p className="font-medium text-foreground">{doctor?.qualification ?? "—"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Consultation Fee</p>
+              <p className="font-medium text-foreground">
+                ₹{doctor?.consultationFee ? Number(doctor.consultationFee).toLocaleString("en-IN") : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Experience</p>
+              <p className="font-medium text-foreground">
+                {doctor?.experienceYears ? `${doctor.experienceYears} Years` : "—"}
+              </p>
+            </div>
+            {doctor?.bio && (
+              <div>
+                <p className="text-xs text-muted-foreground">Clinical Bio</p>
+                <p className="text-xs text-foreground/80 mt-0.5 leading-relaxed">{doctor.bio}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Slot Management Shell */}
+        <Card className="md:col-span-2 shadow-sm border-border bg-card flex flex-col justify-between">
+          <div>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-primary" />
+                  Availability Slots
+                </CardTitle>
+                <span className="text-[11px] font-medium bg-muted text-muted-foreground px-2 py-0.5 rounded">
+                  Coming soon (Phase 3)
+                </span>
+              </div>
+              <CardDescription className="text-xs">
+                Manage your weekly consultation hours and appointment slots
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-lg border border-dashed border-border p-8 text-center space-y-3 bg-muted/20">
+                <div className="h-10 w-10 rounded-full bg-primary/10 text-primary mx-auto flex items-center justify-center">
+                  <Briefcase className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">
+                    Slot Management Architecture Coming in Phase 3
+                  </h3>
+                  <p className="text-xs text-muted-foreground max-w-sm mx-auto mt-1">
+                    Doctor schedule generation, 30-minute slot creation, and manual slot blocking
+                    will be implemented in Phase 3.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </div>
+          <div className="p-6 pt-0 border-t border-border mt-6">
+            <p className="text-xs text-muted-foreground">
+              Approval Status: <span className="font-semibold text-foreground">{doctor?.status}</span>
+            </p>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}

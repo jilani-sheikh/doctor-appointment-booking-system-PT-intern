@@ -8,17 +8,28 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { Activity, Menu, Stethoscope } from "lucide-react";
+import { Activity, Menu, Stethoscope, LayoutDashboard } from "lucide-react";
+import type { Role } from "@/generated/prisma/client";
 
 interface NavbarProps {
   user?: {
     name?: string | null;
     email?: string | null;
     image?: string | null;
+    role?: Role | null;
   } | null;
 }
 
 export function Navbar({ user }: NavbarProps) {
+  const dashboardUrl =
+    user?.role === "PATIENT"
+      ? "/patient/dashboard"
+      : user?.role === "DOCTOR"
+      ? "/doctor/dashboard"
+      : user?.role === "ADMIN"
+      ? "/admin/dashboard"
+      : "/onboarding";
+
   const navLinks = [
     { href: "/", label: "Home" },
     { href: "/doctors", label: "Find Doctors" },
@@ -49,6 +60,15 @@ export function Navbar({ user }: NavbarProps) {
               {link.label}
             </Link>
           ))}
+          {user && (
+            <Link
+              href={dashboardUrl}
+              className="text-sm font-semibold text-primary hover:text-primary/80 transition-colors flex items-center gap-1.5"
+            >
+              <LayoutDashboard className="h-4 w-4" />
+              <span>Dashboard</span>
+            </Link>
+          )}
         </nav>
 
         {/* Right Section: Auth & Mobile Menu */}
@@ -82,6 +102,15 @@ export function Navbar({ user }: NavbarProps) {
                       {link.label}
                     </Link>
                   ))}
+                  {user && (
+                    <Link
+                      href={dashboardUrl}
+                      className="text-base font-semibold text-primary py-2 px-1 rounded-md transition-colors flex items-center gap-2"
+                    >
+                      <LayoutDashboard className="h-4 w-4" />
+                      <span>My Dashboard</span>
+                    </Link>
+                  )}
                   <div className="pt-4 border-t border-border">
                     <Link
                       href="/book"
