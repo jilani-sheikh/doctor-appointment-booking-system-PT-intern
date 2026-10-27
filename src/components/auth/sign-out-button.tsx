@@ -28,6 +28,8 @@ export function SignOutButton({
 }: SignOutButtonProps) {
   const [isPending, startTransition] = useTransition();
 
+  const { onClick, ...restProps } = props;
+
   const handleAction = () => {
     startTransition(async () => {
       try {
@@ -42,18 +44,25 @@ export function SignOutButton({
     });
   };
 
+  const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (onClick) {
+      onClick(e);
+    }
+  };
+
   if (variant === "dropdown") {
     return (
       <form action={handleAction} className="w-full">
         <button
           type="submit"
+          onClick={handleClick}
           disabled={isPending || disabled}
           aria-label="Sign out of account"
           className={cn(
             "w-full flex items-center gap-2 px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10 rounded-sm cursor-pointer transition-colors text-left",
             className
           )}
-          {...props}
+          {...restProps}
         >
           {isPending ? (
             <Loader2 className="h-4 w-4 animate-spin shrink-0" />
@@ -68,20 +77,21 @@ export function SignOutButton({
 
   return (
     <form action={handleAction} className="inline-block">
-      <button
-        type="submit"
-        disabled={isPending || disabled}
-        aria-label="Sign out of account"
-        className={cn(
-          buttonVariants({
-            variant,
-            size,
-          }),
-          "cursor-pointer flex items-center gap-1.5",
-          className
-        )}
-        {...props}
-      >
+        <button
+          type="submit"
+          onClick={handleClick}
+          disabled={isPending || disabled}
+          aria-label="Sign out of account"
+          className={cn(
+            buttonVariants({
+              variant,
+              size,
+            }),
+            "cursor-pointer flex items-center gap-1.5",
+            className
+          )}
+          {...restProps}
+        >
         {isPending ? (
           <Loader2 className="h-4 w-4 animate-spin shrink-0" />
         ) : (

@@ -1,16 +1,10 @@
 "use client";
 
+import * as React from "react";
+import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { LogIn, LayoutDashboard, Shield, Stethoscope, User as UserIcon } from "lucide-react";
 import type { Role } from "@/generated/prisma/client";
@@ -25,6 +19,33 @@ interface AuthButtonProps {
 }
 
 export function AuthButton({ user }: AuthButtonProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside or pressing Escape
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
+
+    if (isOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
+
   if (!user) {
     return (
       <Link
@@ -73,10 +94,14 @@ export function AuthButton({ user }: AuthButtonProps) {
       : "Incomplete Profile";
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
+    <div className="relative inline-block text-left" ref={menuRef}>
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        aria-expanded={isOpen}
+        aria-haspopup="true"
         aria-label="User menu"
-        className="rounded-full ring-2 ring-primary/20 hover:ring-primary/40 focus:outline-none focus:ring-2 focus:ring-primary transition-all cursor-pointer p-0 border-0 bg-transparent"
+        className="rounded-full ring-2 ring-primary/20 hover:ring-primary/40 focus:outline-none focus:ring-2 focus:ring-primary transition-all cursor-pointer p-0 border-0 bg-transparent flex items-center"
       >
         <Avatar className="h-9 w-9">
           {user.image && <AvatarImage src={user.image} alt={user.name ?? "User avatar"} />}
@@ -84,17 +109,25 @@ export function AuthButton({ user }: AuthButtonProps) {
             {initials}
           </AvatarFallback>
         </Avatar>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56 p-2 bg-card text-card-foreground shadow-lg border border-border">
-        <DropdownMenuLabel className="font-normal">
-          <div className="flex flex-col space-y-1">
+      </button>
+
+      {isOpen && (
+        <div
+          role="menu"
+          aria-orientation="vertical"
+          className="absolute right-0 z-50 mt-2 w-60 rounded-xl border border-border bg-card p-2 text-card-foreground shadow-xl animate-in fade-in-0 zoom-in-95 duration-100 focus:outline-none"
+        >
+          {/* User Information */}
+          <div className="px-2.5 py-2">
             <p className="text-sm font-semibold leading-none text-foreground truncate">
               {user.name ?? "User"}
             </p>
             {user.email && (
-              <p className="text-xs leading-none text-muted-foreground truncate">{user.email}</p>
+              <p className="text-xs leading-none text-muted-foreground truncate mt-1">
+                {user.email}
+              </p>
             )}
-            <div className="pt-1 flex items-center gap-1.5">
+            <div className="pt-2 flex items-center gap-1.5">
               <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary">
                 {user.role === "ADMIN" && <Shield className="h-3 w-3" />}
                 {user.role === "DOCTOR" && <Stethoscope className="h-3 w-3" />}
@@ -103,22 +136,31 @@ export function AuthButton({ user }: AuthButtonProps) {
               </span>
             </div>
           </div>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator className="my-1 border-border" />
-        <DropdownMenuItem
-          render={
-            <Link
-              href={dashboardUrl}
-              className="w-full flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-muted rounded-sm transition-colors text-foreground"
+
+          <div className="my-1 border-t border-border" />
+
+          {/* Navigation link */}
+          <Link
+            href={dashboardUrl}
+            onClick={() => setIsOpen(false)}
+            role="menuitem"
+            className="w-full flex items-center gap-2.5 px-2.5 py-2 text-sm cursor-pointer hover:bg-muted rounded-md transition-colors text-foreground font-medium"
+          >
+            <LayoutDashboard className="h-4 w-4 text-primary" />
+            <span>{user.role ? "Dashboard" : "Complete Profile"}</span>
+          </Link>
+
+          <div className="my-1 border-t border-border" />
+
+          {/* Sign Out Action */}
+          <div className="px-0.5 pt-0.5">
+            <SignOutButton
+              variant="dropdown"
+              onClick={() => setIsOpen(false)}
             />
-          }
-        >
-          <LayoutDashboard className="h-4 w-4 text-primary" />
-          <span>{user.role ? "Dashboard" : "Complete Profile"}</span>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator className="my-1 border-border" />
-        <SignOutButton variant="dropdown" />
-      </DropdownMenuContent>
-    </DropdownMenu>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
