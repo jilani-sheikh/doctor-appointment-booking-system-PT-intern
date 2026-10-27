@@ -1,10 +1,12 @@
 import { Metadata } from "next";
-import { requireRole } from "@/lib/auth";
-import { Role, DoctorStatus } from "@/generated/prisma/client";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertCircle, CheckCircle2, Clock, Calendar, Stethoscope, Briefcase } from "lucide-react";
 import Link from "next/link";
+import { requireRole } from "@/lib/auth";
+import { Role, DoctorStatus, AppointmentStatus, SlotStatus } from "@/generated/prisma/client";
+import { db } from "@/lib/db";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
+import { AlertCircle, CheckCircle2, Clock, Calendar, Stethoscope, Briefcase, Users, ArrowRight } from "lucide-react";
+import { getTodayISTDateString, getISTDateString } from "@/lib/time";
 
 export const metadata: Metadata = {
   title: "Doctor Dashboard — Medrella",
@@ -19,6 +21,64 @@ export default async function DoctorDashboardPage() {
   const isRejected = doctor?.status === DoctorStatus.REJECTED;
   const isApproved = doctor?.status === DoctorStatus.APPROVED;
 
+  let todayAppointmentsCount = 0;
+  let pendingConfirmationsCount = 0;
+  let upcomingTotalCount = 0;
+  let openSlotsCount = 0;
+
+  if (isApproved && doctor) {
+    const now = new Date();
+    const todayIST = getTodayISTDateString();
+
+    const [allDoctorAppts, availableSlots] = await Promise.all([
+      db.appointment.findMany({
+        where: {
+          availability: {
+            doctorId: doctor.id,
+          },
+        },
+        include: {
+          availability: {
+            select: {
+              startTime: true,
+            },
+          },
+        },
+      }),
+      db.availability.count({
+        where: {
+          doctorId: doctor.id,
+          startTime: { gte: now },
+          status: SlotStatus.AVAILABLE,
+        },
+      }),
+    ]);
+
+    openSlotsCount = availableSlots;
+
+    for (const appt of allDoctorAppts) {
+      if (appt.status === AppointmentStatus.PENDING) {
+        pendingConfirmationsCount++;
+      }
+
+      const slotDateIST = getISTDateString(appt.availability.startTime);
+      if (
+        slotDateIST === todayIST &&
+        appt.status !== AppointmentStatus.CANCELLED &&
+        appt.status !== AppointmentStatus.NO_SHOW
+      ) {
+        todayAppointmentsCount++;
+      }
+
+      if (
+        appt.availability.startTime >= now &&
+        (appt.status === AppointmentStatus.PENDING || appt.status === AppointmentStatus.CONFIRMED)
+      ) {
+        upcomingTotalCount++;
+      }
+    }
+  }
+
   return (
     <div className="container mx-auto max-w-5xl px-4 py-8 space-y-6">
       {/* Status Banners */}
@@ -31,8 +91,8 @@ export default async function DoctorDashboardPage() {
             </h4>
             <p className="text-xs text-amber-800 leading-relaxed">
               Your doctor profile has been submitted and is currently pending verification. While in
-              pending status, patients cannot book consultations with you. In Phase 2, admin verification
-              is managed directly in Prisma Studio.
+              pending status, patients cannot book consultations with you. Administrators can verify your
+              credentials in the Admin Portal.
             </p>
           </div>
         </div>
@@ -71,7 +131,67 @@ export default async function DoctorDashboardPage() {
             {doctor?.specialization} • {doctor?.qualification ?? "Medical Practitioner"}
           </p>
         </div>
+
+        {isApproved && (
+          <div className="flex items-center gap-3">
+            <Link
+              href="/doctor/slots"
+              className={buttonVariants({ variant: "default", size: "sm", className: "gap-1.5" })}
+            >
+              <Calendar className="h-4 w-4" />
+              Manage Slots
+            </Link>
+            <Link
+              href="/doctor/appointments"
+              className={buttonVariants({ variant: "outline", size: "sm", className: "gap-1.5" })}
+            >
+              <Users className="h-4 w-4" />
+              Consultations
+            </Link>
+          </div>
+        )}
       </div>
+
+      {/* Stats Cards (Milestone 4) */}
+      {isApproved && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card className="border-border shadow-xs">
+            <CardHeader className="py-3 px-4">
+              <CardDescription className="text-xs">Today&apos;s Appointments</CardDescription>
+              <CardTitle className="text-2xl font-bold text-foreground">
+                {todayAppointmentsCount}
+              </CardTitle>
+            </CardHeader>
+          </Card>
+
+          <Card className="border-border shadow-xs">
+            <CardHeader className="py-3 px-4">
+              <CardDescription className="text-xs">Pending Confirmations</CardDescription>
+              <CardTitle className="text-2xl font-bold text-amber-600 dark:text-amber-400">
+                {pendingConfirmationsCount}
+              </CardTitle>
+            </CardHeader>
+          </Card>
+
+          <Card className="border-border shadow-xs">
+            <CardHeader className="py-3 px-4">
+              <CardDescription className="text-xs">Upcoming Total</CardDescription>
+              <CardTitle className="text-2xl font-bold text-foreground">
+                {upcomingTotalCount}
+              </CardTitle>
+            </CardHeader>
+          </Card>
+
+          <Card className="border-border shadow-xs">
+            <CardHeader className="py-3 px-4">
+              <CardDescription className="text-xs">Open Slots</CardDescription>
+              <CardTitle className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                {openSlotsCount}
+              </CardTitle>
+            </CardHeader>
+          </Card>
+        </div>
+      )}
 
       {/* Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -121,17 +241,19 @@ export default async function DoctorDashboardPage() {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Calendar className="h-4 w-4 text-primary" />
-                  Availability Slots
+                  Availability & Consultations
                 </CardTitle>
-                <Link
-                  href="/doctor/slots"
-                  className={buttonVariants({ size: "sm", variant: "default" })}
-                >
-                  Manage Slots
-                </Link>
+                {isApproved && (
+                  <Link
+                    href="/doctor/slots"
+                    className={buttonVariants({ size: "sm", variant: "default" })}
+                  >
+                    Manage Slots
+                  </Link>
+                )}
               </div>
               <CardDescription className="text-xs">
-                Manage your weekly consultation hours and appointment slots
+                Manage your weekly consultation hours and upcoming patient bookings
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -141,20 +263,28 @@ export default async function DoctorDashboardPage() {
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">
-                    Doctor Slot Management
+                    Doctor Slot & Consultation Workflow
                   </h3>
                   <p className="text-xs text-muted-foreground max-w-sm mx-auto mt-1">
-                    Bulk-generate consultation slots, customize working days and durations, and block hours directly.
+                    Bulk-generate consultation slots, manage cancellations, and confirm appointments.
                   </p>
                 </div>
-                <div className="pt-2">
-                  <Link
-                    href="/doctor/slots"
-                    className={buttonVariants({ variant: "outline", size: "sm" })}
-                  >
-                    Open Slot Manager →
-                  </Link>
-                </div>
+                {isApproved && (
+                  <div className="flex justify-center gap-3 pt-2">
+                    <Link
+                      href="/doctor/slots"
+                      className={buttonVariants({ variant: "outline", size: "sm" })}
+                    >
+                      Open Slot Manager →
+                    </Link>
+                    <Link
+                      href="/doctor/appointments"
+                      className={buttonVariants({ variant: "default", size: "sm" })}
+                    >
+                      View Appointments →
+                    </Link>
+                  </div>
+                )}
               </div>
             </CardContent>
           </div>
@@ -162,9 +292,11 @@ export default async function DoctorDashboardPage() {
             <p className="text-xs text-muted-foreground">
               Approval Status: <span className="font-semibold text-foreground">{doctor?.status}</span>
             </p>
-            <Link href="/doctor/appointments" className="text-xs text-primary font-medium hover:underline">
-              View Appointments →
-            </Link>
+            {isApproved && (
+              <Link href="/doctor/appointments" className="text-xs text-primary font-medium hover:underline flex items-center gap-1">
+                View Today&apos;s Schedule <ArrowRight className="h-3 w-3" />
+              </Link>
+            )}
           </div>
         </Card>
       </div>

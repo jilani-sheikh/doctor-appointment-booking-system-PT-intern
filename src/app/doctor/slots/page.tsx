@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { formatDateIST } from "@/lib/time";
 import { SlotGeneratorForm } from "./slot-form";
 import { SlotList, type SerializedSlot } from "./slot-list";
-import { AlertCircle, Clock, ShieldAlert } from "lucide-react";
+import { Clock, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 

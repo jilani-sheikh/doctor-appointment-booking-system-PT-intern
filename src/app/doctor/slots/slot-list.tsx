@@ -4,7 +4,7 @@ import { useTransition } from "react";
 import { toggleBlockSlotAction, deleteSlotAction } from "@/lib/actions/slots";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Ban, CheckCircle2, Clock, Trash2, Calendar } from "lucide-react";
 import { formatTimeIST } from "@/lib/time";

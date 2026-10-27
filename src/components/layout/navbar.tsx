@@ -69,6 +69,42 @@ export function Navbar({ user }: NavbarProps) {
               <span>Dashboard</span>
             </Link>
           )}
+
+          {/* Role-specific Desktop Navigation */}
+          {user?.role === "PATIENT" && (
+            <Link
+              href="/patient/appointments"
+              className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+            >
+              Appointments
+            </Link>
+          )}
+
+          {user?.role === "DOCTOR" && (
+            <>
+              <Link
+                href="/doctor/appointments"
+                className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+              >
+                Appointments
+              </Link>
+              <Link
+                href="/doctor/slots"
+                className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+              >
+                Slots
+              </Link>
+            </>
+          )}
+
+          {user?.role === "ADMIN" && (
+            <Link
+              href="/admin/doctors"
+              className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+            >
+              Doctor Verifications
+            </Link>
+          )}
         </nav>
 
         {/* Right Section: Auth & Mobile Menu */}
@@ -102,6 +138,42 @@ export function Navbar({ user }: NavbarProps) {
                       {link.label}
                     </Link>
                   ))}
+
+                  {user?.role === "PATIENT" && (
+                    <Link
+                      href="/patient/appointments"
+                      className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
+                    >
+                      Appointments
+                    </Link>
+                  )}
+
+                  {user?.role === "DOCTOR" && (
+                    <>
+                      <Link
+                        href="/doctor/appointments"
+                        className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
+                      >
+                        Appointments
+                      </Link>
+                      <Link
+                        href="/doctor/slots"
+                        className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
+                      >
+                        Slots
+                      </Link>
+                    </>
+                  )}
+
+                  {user?.role === "ADMIN" && (
+                    <Link
+                      href="/admin/doctors"
+                      className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
+                    >
+                      Doctor Verifications
+                    </Link>
+                  )}
+
                   {user && (
                     <Link
                       href={dashboardUrl}

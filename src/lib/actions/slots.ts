@@ -4,7 +4,7 @@ import { requireRole } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { bulkSlotSchema, type BulkSlotInput } from "@/lib/validations/slots";
 import { Role, DoctorStatus, SlotStatus } from "@/generated/prisma/client";
-import { parseISTDateTime, getTodayISTDateString } from "@/lib/time";
+import { parseISTDateTime } from "@/lib/time";
 import { revalidatePath } from "next/cache";
 
 /**
