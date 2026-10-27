@@ -1,193 +1,206 @@
-# Doctor Appointment Booking System
+# Medrella — Doctor Appointment Booking System
 
-A full-stack web application designed to simplify doctor appointment scheduling by connecting patients with doctors, managing doctor availability, and facilitating appointment bookings.
+Medrella is a full-stack doctor appointment scheduling web application connecting patients with healthcare professionals, managing doctor availability, and facilitating conflict-free consultation bookings.
 
-This project is being developed as part of the PearlThoughts internship programme.
+Developed as part of the PearlThoughts internship programme.
+
+---
 
 ## 📌 Project Overview
 
-The Doctor Appointment Booking System aims to provide a structured platform for managing users, patient profiles, doctor profiles, doctor availability, and appointments.
+Medrella aims to provide a reliable, modern healthcare platform for managing users, patient profiles, doctor profiles, availability slots, and appointment workflows.
 
-The application will support role-based access for patients and doctors, allowing patients to explore doctors and book available appointment slots while enabling doctors to manage their availability and appointments.
+The application supports:
+- **Phase 1 (Completed):** Secure project foundation, light healthcare design system, database migration infrastructure, and Google OAuth via Auth.js v5.
+- **Future Phases:** Role-based access (patients/doctors), availability slot management, appointment booking lifecycle, notifications, and payments.
 
-The project will be developed incrementally, following a modular architecture and RESTful API principles.
+---
 
-## 🎯 Objectives
+## 🛠️ Technology Stack (Phase 1)
 
-- Implement user registration, authentication, and role-based access.
-- Maintain patient and doctor profiles.
-- Allow doctors to manage their availability.
-- Enable patients to book appointments using available time slots.
-- Prevent conflicting bookings and duplicate reservations.
-- Maintain appointment statuses and support appointment lifecycle management.
-- Design a structured, relational PostgreSQL database.
-- Build maintainable, modular backend APIs using NestJS and TypeScript.
+| Technology | Purpose | Version |
+|---|---|---|
+| **Next.js** (App Router) | React full-stack framework with Turbopack | `16.4.3` |
+| **React** | Component architecture & modern hooks | `19.3.0` |
+| **TypeScript** | Strict compile-time type safety | `^5` |
+| **Tailwind CSS** | Styling engine with `@tailwindcss/postcss` | `^4` |
+| **shadcn/ui** | Accessible UI primitives (Button, Avatar, Card, DropdownMenu, Sheet) | `4.23.0` |
+| **PostgreSQL on Neon** | Serverless relational database via `@neondatabase/serverless` | `^1.2.0` |
+| **Drizzle ORM** | Type-safe ORM via `drizzle-orm/neon-http` & `drizzle-kit` | `0.45.4` / `0.31.11` |
+| **Auth.js (NextAuth v5)** | Authentication with `@auth/drizzle-adapter` & Google OAuth | `5.0.0-beta.32` |
+| **Zod** | Lazy runtime environment validation & schemas | `^3.24.2` |
 
-## 🛠️ Technology Stack
+---
 
-| Technology | Purpose |
-|---|---|
-| Next.js | Frontend development and user interface |
-| TypeScript | Type safety and maintainable application code |
-| Node.js | JavaScript runtime for server-side execution |
-| NestJS | Modular backend application and REST API development |
-| PostgreSQL | Relational database for persistent application data |
+## 🏗️ Architectural Decisions
 
-The frontend and backend will be developed as separate application layers, communicating through HTTP APIs.
+### 1. JWT Session Strategy with Drizzle Adapter
+Medrella configures Auth.js v5 with `session: { strategy: "jwt" }` combined with `@auth/drizzle-adapter`:
+- **Account Persistence:** On successful Google OAuth sign-in, Auth.js creates and links the user and account records in Neon PostgreSQL via the Drizzle adapter.
+- **Performance & Edge-Friendliness:** Instead of making blocking database round-trips on every page navigation to inspect a database session row, the session state is cryptographically signed and stored in a secure cookie.
+- **Zero-Credential Builds:** Public landing pages render without database queries, keeping the application fast, resilient, and cost-effective.
 
-## 🧩 Planned Modules
+### 2. Lazy Environment Validation
+All environment variables are validated lazily on demand (`src/lib/env.ts`):
+- `npm run build` and public landing page visits require zero environment variables.
+- When an operation requiring credentials is run (e.g. initiating Google OAuth or running a database query), Zod validates the specific variable and provides an explicit, actionable error message naming the exact missing variable.
 
-Development will follow the module sequence defined for the project.
+### 3. Server-Only Database Client
+The Drizzle client (`src/lib/db/index.ts`) enforces `import "server-only"`. The HTTP client connects to Neon via `@neondatabase/serverless` only when SQL queries are dispatched, avoiding connection pools and preventing database credentials from ever leaking into client bundles.
 
-### 1. User Module
-- Manage common user information.
-- Support user registration and authentication.
-- Maintain user roles, such as patient and doctor.
-- Provide the foundation for role-based access control.
+---
 
-### 2. Patient Module
-- Maintain patient profiles linked to user accounts.
-- Store relevant patient information.
-- Support patient profile creation and updates.
-
-### 3. Doctor Module
-- Maintain doctor profiles linked to user accounts.
-- Store professional information, including specialisation and qualifications.
-- Manage doctor profile information.
-
-### 4. Availability Module
-- Allow doctors to define their available appointment slots.
-- Retrieve available slots for a doctor.
-- Track slot availability and booking status.
-- Prevent a slot from being booked by multiple patients.
-
-### 5. Appointment Module
-- Allow patients to book available appointment slots.
-- Associate appointments with patients and availability slots.
-- Maintain appointment statuses.
-- Support appointment management, including cancellation and rescheduling, according to the final requirements.
-
-## 🗄️ Database Design
-
-PostgreSQL will be used as the relational database.
-
-The initial database design defines the relationships between users, patients, doctors, availability slots, and appointments.
-
-### Entity-Relationship Diagram
-
-The ER diagram is available in PNG format:
-
-![Doctor Appointment Booking System ER Diagram](docs/Doctor%20Appointment%20Booking%20System.png)
-
-### Editable ER Diagram Source
-
-The editable DBML source is available here:
-
-[View the DBML source](docs/doctor-appointment-booking-system.dbml)
-
-### Planned Entities
-
-| Entity | Purpose |
-|---|---|
-| `users` | Stores common user information and account roles |
-| `patients` | Stores patient-specific profile information |
-| `doctors` | Stores doctor-specific professional information |
-| `availabilities` | Stores doctors' available appointment slots |
-| `appointments` | Stores appointment records and their statuses |
-
-The initial schema establishes relationships between users and their corresponding patient or doctor profiles. It also associates availability slots with doctors and appointments with patients and availability slots.
-
-Database constraints and application-level validations will be implemented to maintain data integrity and prevent conflicting bookings.
-
-**Note:** The ER diagram and DBML file represent the initial database design. The schema may be refined as implementation requirements become clearer.
-
-## 🏗️ Application Architecture
-
-The application will use a frontend-backend architecture.
+## 📂 Repository Structure
 
 ```text
-                 Patient / Doctor
-                        |
-                        v
-                 Next.js Frontend
-                        |
-                   HTTP / REST
-                        |
-                        v
-                 NestJS Backend
-                        |
-             ----------------------
-             |         |          |
-             v         v          v
-           User     Patient     Doctor
-             Module   Module     Module
-                        |
-                 Availability Module
-                        |
-                  Appointment Module
-                        |
-                        v
-                  PostgreSQL
-```
-
-NestJS modules will separate application responsibilities and help keep the backend maintainable as the project grows.
-
-The final module structure and database integration will be established during implementation.
-
-## 📂 Initial Repository Structure
-
-```text
-doctor-appointment-booking-system-PT-intern/
+Doc_Booking_System/
+├── .env.example              # Environment variables template
+├── .gitignore                # Excludes secrets and build artifacts
+├── README.md                 # Project documentation and setup guide
+├── components.json           # shadcn/ui configuration
+├── drizzle.config.ts         # Drizzle Kit configuration (loads .env.local)
+├── next.config.ts            # Next.js configuration (remotePatterns for Google avatars)
+├── package.json              # Project scripts and dependencies
+├── postcss.config.mjs        # PostCSS configuration with Tailwind v4
+├── tsconfig.json             # TypeScript configuration (@/* alias, strict mode)
 ├── docs/
-│   ├── Doctor Appointment Booking System.png
-│   └── doctor-appointment-booking-system.dbml
-├── README.md
-└── ...
+│   ├── Doctor Appointment Booking System.png  # Entity Relationship Diagram
+│   └── doctor-appointment-booking-system.dbml # Editable DBML source
+├── drizzle/                  # Generated SQL migrations
+│   └── 0000_panoramic_shocker.sql
+└── src/
+    ├── app/
+    │   ├── layout.tsx        # Root layout (Navbar, Footer, SEO metadata)
+    │   ├── page.tsx          # Landing page (Hero, Benefits, How It Works)
+    │   ├── globals.css       # Tailwind v4 theme tokens & healthcare styles
+    │   ├── api/auth/[...nextauth]/route.ts  # Auth.js HTTP route handler
+    │   ├── doctors/page.tsx  # Doctors directory (Coming soon placeholder)
+    │   ├── book/page.tsx     # Appointment booking (Coming soon placeholder)
+    │   └── about/page.tsx    # About page (Coming soon placeholder)
+    ├── components/
+    │   ├── layout/
+    │   │   ├── auth-button.tsx  # Sign In / Avatar Dropdown Menu
+    │   │   ├── footer.tsx       # Platform footer
+    │   │   └── navbar.tsx       # Responsive header with mobile sheet
+    │   └── ui/               # shadcn UI primitives (button, avatar, card, sheet, etc.)
+    ├── lib/
+    │   ├── auth.ts           # Auth.js config and server helpers (getCurrentUser, requireUser)
+    │   ├── env.ts            # Lazy Zod environment variable validator
+    │   ├── utils.ts          # Classname helper (cn)
+    │   ├── actions/
+    │   │   └── auth.ts       # Server actions (signInAction, signOutAction)
+    │   └── db/
+    │       ├── index.ts      # Server-only lazy Neon HTTP Drizzle client
+    │       └── schema.ts     # Auth.js Postgres adapter schema
+    └── types/
+        └── next-auth.d.ts    # Module augmentations for NextAuth Session and User
 ```
 
-The repository currently contains the initial database design documentation. Frontend and backend source code will be added as development progresses.
+---
 
-## 🚀 Development Roadmap
+## ⚙️ Environment Variables
 
-The planned development sequence is:
+Create `.env.local` in the project root:
 
-1. **Project Setup:** Initialise the frontend and backend projects and establish the development environment.
-2. **User Module:** Implement user management, authentication, and roles.
-3. **Patient Module:** Implement patient profiles and related APIs.
-4. **Doctor Module:** Implement doctor profiles and related APIs.
-5. **Availability Module:** Implement doctor availability and slot management.
-6. **Appointment Module:** Implement booking and appointment lifecycle management.
-7. **Integration and Testing:** Integrate the modules, validate API behaviour, and test database constraints.
-8. **Documentation:** Maintain setup instructions and document the implemented functionality.
+```env
+# Neon PostgreSQL connection string (Serverless HTTP)
+DATABASE_URL="postgresql://[user]:[password]@[neon-hostname]/[database]?sslmode=require"
 
-The roadmap may be adjusted to match the programme's detailed weekly plan and mentor feedback.
+# Auth.js secret (generate using `npx auth secret` or `openssl rand -base64 33`)
+AUTH_SECRET="your-32-char-random-secret"
 
-## 📋 Current Status
+# Google Cloud OAuth 2.0 Credentials
+AUTH_GOOGLE_ID="your-client-id.apps.googleusercontent.com"
+AUTH_GOOGLE_SECRET="your-client-secret"
 
-- [x] Initial ER diagram created.
-- [x] Editable DBML source added.
-- [x] Initial database entities and relationships documented.
-- [x] Project repository created.
-- [ ] Frontend project setup.
-- [ ] NestJS backend setup.
-- [ ] PostgreSQL database configuration.
-- [ ] User module implementation.
-- [ ] Patient module implementation.
-- [ ] Doctor module implementation.
-- [ ] Availability module implementation.
-- [ ] Appointment module implementation.
-- [ ] API integration and testing.
+# Optional (Vercel automatically sets this in production)
+# AUTH_URL="https://your-deployment.vercel.app"
+```
 
-## 🤝 Development Workflow
+---
 
-The project will use Git and GitHub for version control.
+## 🚀 Getting Started
 
-- `main` will serve as the primary branch.
-- Feature branches will be used for individual changes.
-- Pull Requests will be used to review and document proposed changes before merging, following the applicable repository and internship guidelines.
+### 1. Install Dependencies
+```bash
+npm install
+```
 
-## 📄 Project Scope
+### 2. Run Local Development Server
+```bash
+npm run dev
+```
+Open [http://localhost:3000](http://localhost:3000) to view the Medrella landing page.
 
-This README documents the initial design and planned functionality. Features listed as planned are not considered implemented until their code and tests are completed.
+### 3. Verification & Code Quality
+```bash
+# ESLint check (zero errors, zero warnings)
+npm run lint
 
-The final implementation will follow the requirements and feedback provided during the internship programme.
+# TypeScript compilation check
+npm run typecheck
+
+# Production build (must succeed with NO credentials set)
+npm run build
+```
+
+---
+
+## 🗄️ Database Setup (Neon PostgreSQL)
+
+1. Sign up or log into [Neon](https://neon.tech).
+2. Create a new project (e.g. `medrella-db`).
+3. Under **Dashboard > Connection Details**, select **Connection string** (choose **pooled** or **direct**; `@neondatabase/serverless` operates over HTTPS).
+4. Copy the connection string into `.env.local` as `DATABASE_URL`.
+5. Run the database migration script:
+   ```bash
+   npm run db:migrate
+   ```
+6. (Optional) Open Drizzle Studio to inspect database records:
+   ```bash
+   npm run db:studio
+   ```
+
+---
+
+## 🔐 Google OAuth Configuration
+
+1. Visit the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project named **Medrella**.
+3. Navigate to **APIs & Services > OAuth consent screen**:
+   - User Type: **External**
+   - App name: `Medrella`
+   - User support email & Developer contact email: your email
+   - Scopes: `.../auth/userinfo.email`, `.../auth/userinfo.profile`, `openid`
+   - Add test users if the app remains in "Testing" mode.
+4. Navigate to **APIs & Services > Credentials > Create Credentials > OAuth client ID**:
+   - Application type: **Web application**
+   - Name: `Medrella Web Client`
+   - **Authorized JavaScript origins**:
+     - `http://localhost:3000`
+     - `https://<your-vercel-domain>.vercel.app` (for production)
+   - **Authorized redirect URIs**:
+     - `http://localhost:3000/api/auth/callback/google`
+     - `https://<your-vercel-domain>.vercel.app/api/auth/callback/google`
+5. Copy the generated **Client ID** and **Client Secret** into `.env.local`:
+   ```env
+   AUTH_GOOGLE_ID="..."
+   AUTH_GOOGLE_SECRET="..."
+   ```
+
+---
+
+## 📋 Project Status & Roadmap
+
+- [x] Initial ER diagram and DBML documentation.
+- [x] **Phase 1: Project Setup and Secure Foundation**
+  - [x] Next.js 16 App Router + TypeScript + Tailwind CSS v4 setup.
+  - [x] shadcn/ui component integration.
+  - [x] Neon PostgreSQL + Drizzle ORM client & migration files generated.
+  - [x] Auth.js v5 (NextAuth beta) with Google provider & Drizzle adapter.
+  - [x] Lazy Zod environment validation (zero-credential build support).
+  - [x] Responsive healthcare landing page with "Coming soon" placeholders.
+- [ ] **Phase 2: User Profiles & Roles** (Patients, Doctors, Admin).
+- [ ] **Phase 3: Doctor Availability Module** (Slots & calendar scheduling).
+- [ ] **Phase 4: Appointment Booking & Lifecycle Management**.
+- [ ] **Phase 5: Notifications & Payments**.
