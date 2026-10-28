@@ -104,6 +104,12 @@ export function OnboardingFlow({ userName }: OnboardingFlowProps) {
 
         if (!res.success) {
           setErrorMessage(res.error || "Failed to complete onboarding.");
+          if (res.redirectUrl) {
+            setTimeout(() => {
+              router.refresh();
+              router.push(res.redirectUrl!);
+            }, 1500);
+          }
         } else {
           router.refresh();
           router.push(res.redirectUrl || "/patient/dashboard");
@@ -123,6 +129,12 @@ export function OnboardingFlow({ userName }: OnboardingFlowProps) {
 
         if (!res.success) {
           setErrorMessage(res.error || "Failed to complete onboarding.");
+          if (res.redirectUrl) {
+            setTimeout(() => {
+              router.refresh();
+              router.push(res.redirectUrl!);
+            }, 1500);
+          }
         } else {
           router.refresh();
           router.push(res.redirectUrl || "/doctor/dashboard");
