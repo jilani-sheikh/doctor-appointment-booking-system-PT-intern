@@ -11,24 +11,8 @@ import { toast } from "sonner";
 import { Calendar, Clock, Ban } from "lucide-react";
 import { formatDateTimeIST, formatTimeIST } from "@/lib/time";
 import type { AppointmentStatus } from "@/generated/prisma/client";
-
-export interface SerializedPatientAppointment {
-  id: string;
-  status: AppointmentStatus;
-  reason?: string | null;
-  createdAt: string;
-  cancelledAt?: string | null;
-  slotStartTime: string;
-  slotEndTime: string;
-  canCancel: boolean;
-  doctor: {
-    id: string;
-    name: string;
-    specialization: string;
-    qualification?: string | null;
-    consultationFee: number;
-  };
-}
+import type { SerializedPatientAppointment } from "@/lib/serializers";
+export type { SerializedPatientAppointment };
 
 interface AppointmentsViewProps {
   upcomingAppointments: SerializedPatientAppointment[];

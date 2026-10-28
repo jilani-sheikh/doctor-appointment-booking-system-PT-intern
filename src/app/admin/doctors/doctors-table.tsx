@@ -16,19 +16,8 @@ import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { CheckCircle2, XCircle } from "lucide-react";
 import type { DoctorStatus } from "@/generated/prisma/client";
-
-export interface SerializedAdminDoctor {
-  id: string;
-  name: string;
-  email: string;
-  specialization: string;
-  qualification?: string | null;
-  consultationFee: number;
-  experienceYears?: number | null;
-  status: DoctorStatus;
-  isDemo: boolean;
-  createdAt: string;
-}
+import type { SerializedAdminDoctor } from "@/lib/serializers";
+export type { SerializedAdminDoctor };
 
 interface DoctorsTableProps {
   doctors: SerializedAdminDoctor[];

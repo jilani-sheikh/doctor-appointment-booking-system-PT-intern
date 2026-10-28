@@ -20,12 +20,8 @@ import { toast } from "sonner";
 import { Calendar, Clock, Loader2, Stethoscope, CheckCircle2 } from "lucide-react";
 import { formatTimeIST } from "@/lib/time";
 import type { Role } from "@/generated/prisma/client";
-
-export interface SerializedPublicSlot {
-  id: string;
-  startTime: string; // ISO string
-  endTime: string;   // ISO string
-}
+import type { SerializedPublicSlot } from "@/lib/serializers";
+export type { SerializedPublicSlot };
 
 interface DoctorBookingSlotsProps {
   doctorId: string;

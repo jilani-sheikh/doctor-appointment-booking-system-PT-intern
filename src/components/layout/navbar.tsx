@@ -10,24 +10,21 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Activity, Menu, Stethoscope, LayoutDashboard } from "lucide-react";
-import type { Role } from "@/generated/prisma/client";
+import { type NavUser, toNavUser } from "@/lib/serializers";
 
 interface NavbarProps {
-  user?: {
-    name?: string | null;
-    email?: string | null;
-    image?: string | null;
-    role?: Role | null;
-  } | null;
+  user?: NavUser | null;
 }
 
 export function Navbar({ user }: NavbarProps) {
+  const navUser = toNavUser(user);
+
   const dashboardUrl =
-    user?.role === "PATIENT"
+    navUser?.role === "PATIENT"
       ? "/patient/dashboard"
-      : user?.role === "DOCTOR"
+      : navUser?.role === "DOCTOR"
       ? "/doctor/dashboard"
-      : user?.role === "ADMIN"
+      : navUser?.role === "ADMIN"
       ? "/admin/dashboard"
       : "/onboarding";
 
@@ -61,7 +58,7 @@ export function Navbar({ user }: NavbarProps) {
               {link.label}
             </Link>
           ))}
-          {user && (
+          {navUser && (
             <Link
               href={dashboardUrl}
               className="text-sm font-semibold text-primary hover:text-primary/80 transition-colors flex items-center gap-1.5"
@@ -72,7 +69,7 @@ export function Navbar({ user }: NavbarProps) {
           )}
 
           {/* Role-specific Desktop Navigation */}
-          {user?.role === "PATIENT" && (
+          {navUser?.role === "PATIENT" && (
             <Link
               href="/patient/appointments"
               className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
@@ -81,7 +78,7 @@ export function Navbar({ user }: NavbarProps) {
             </Link>
           )}
 
-          {user?.role === "DOCTOR" && (
+          {navUser?.role === "DOCTOR" && (
             <>
               <Link
                 href="/doctor/appointments"
@@ -98,7 +95,7 @@ export function Navbar({ user }: NavbarProps) {
             </>
           )}
 
-          {user?.role === "ADMIN" && (
+          {navUser?.role === "ADMIN" && (
             <Link
               href="/admin/doctors"
               className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
@@ -110,7 +107,7 @@ export function Navbar({ user }: NavbarProps) {
 
         {/* Right Section: Auth & Mobile Menu */}
         <div className="flex items-center gap-3">
-          <AuthButton user={user} />
+          <AuthButton user={navUser} />
 
           {/* Mobile Navigation Drawer */}
           <div className="md:hidden">
@@ -140,7 +137,7 @@ export function Navbar({ user }: NavbarProps) {
                     </Link>
                   ))}
 
-                  {user?.role === "PATIENT" && (
+                  {navUser?.role === "PATIENT" && (
                     <Link
                       href="/patient/appointments"
                       className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
@@ -149,7 +146,7 @@ export function Navbar({ user }: NavbarProps) {
                     </Link>
                   )}
 
-                  {user?.role === "DOCTOR" && (
+                  {navUser?.role === "DOCTOR" && (
                     <>
                       <Link
                         href="/doctor/appointments"
@@ -166,7 +163,7 @@ export function Navbar({ user }: NavbarProps) {
                     </>
                   )}
 
-                  {user?.role === "ADMIN" && (
+                  {navUser?.role === "ADMIN" && (
                     <Link
                       href="/admin/doctors"
                       className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
@@ -175,7 +172,7 @@ export function Navbar({ user }: NavbarProps) {
                     </Link>
                   )}
 
-                  {user && (
+                  {navUser && (
                     <Link
                       href={dashboardUrl}
                       className="text-base font-semibold text-primary py-2 px-1 rounded-md transition-colors flex items-center gap-2"
@@ -192,7 +189,7 @@ export function Navbar({ user }: NavbarProps) {
                       Book Appointment
                     </Link>
 
-                    {user ? (
+                    {navUser ? (
                       <div className="pt-2">
                         <SignOutButton
                           variant="outline"

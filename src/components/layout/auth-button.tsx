@@ -7,15 +7,10 @@ import { signInAction, signOutAction } from "@/lib/actions/auth";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { LogIn, LogOut, LayoutDashboard, Shield, Stethoscope, User as UserIcon, Loader2 } from "lucide-react";
-import type { Role } from "@/generated/prisma/client";
+import type { NavUser } from "@/lib/serializers";
 
 interface AuthButtonProps {
-  user?: {
-    name?: string | null;
-    email?: string | null;
-    image?: string | null;
-    role?: Role | null;
-  } | null;
+  user?: NavUser | null;
 }
 
 export function AuthButton({ user }: AuthButtonProps) {
