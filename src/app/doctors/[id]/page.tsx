@@ -5,7 +5,8 @@ import { db } from "@/lib/db";
 import { isDatabaseConfigured } from "@/lib/env";
 import { getCurrentUser } from "@/lib/auth";
 import { DoctorStatus, SlotStatus } from "@/generated/prisma/client";
-import { DoctorBookingSlots, type SerializedPublicSlot } from "./doctor-booking-slots";
+import { DoctorBookingSlots } from "./doctor-booking-slots";
+import { toPublicSlotDto, type SerializedPublicSlot } from "@/lib/serializers";
 import { formatDateIST } from "@/lib/time";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -141,11 +142,7 @@ export default async function DoctorDetailPage({ params }: DoctorDetailPageProps
       slotsGrouped[dateKey] = [];
     }
 
-    slotsGrouped[dateKey].push({
-      id: slot.id,
-      startTime: slot.startTime.toISOString(),
-      endTime: slot.endTime.toISOString(),
-    });
+    slotsGrouped[dateKey].push(toPublicSlotDto(slot));
   }
 
   const feeNumber = Number(doctor.consultationFee);

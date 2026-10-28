@@ -3,7 +3,8 @@ import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { Role, AppointmentStatus } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
-import { AppointmentsView, type SerializedPatientAppointment } from "./appointments-view";
+import { AppointmentsView } from "./appointments-view";
+import { toPatientAppointmentDto, type SerializedPatientAppointment } from "@/lib/serializers";
 import { Calendar, Plus } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 
@@ -62,25 +63,7 @@ export default async function PatientAppointmentsPage() {
     const isActiveStatus =
       appt.status === AppointmentStatus.PENDING || appt.status === AppointmentStatus.CONFIRMED;
 
-    const canCancel = isActiveStatus && appt.availability.startTime > twoHoursFromNow;
-
-    const serialized: SerializedPatientAppointment = {
-      id: appt.id,
-      status: appt.status,
-      reason: appt.reason,
-      createdAt: appt.createdAt.toISOString(),
-      cancelledAt: appt.cancelledAt ? appt.cancelledAt.toISOString() : null,
-      slotStartTime: appt.availability.startTime.toISOString(),
-      slotEndTime: appt.availability.endTime.toISOString(),
-      canCancel,
-      doctor: {
-        id: appt.availability.doctor.id,
-        name: appt.availability.doctor.user.name ?? "Practitioner",
-        specialization: appt.availability.doctor.specialization,
-        qualification: appt.availability.doctor.qualification,
-        consultationFee: Number(appt.availability.doctor.consultationFee),
-      },
-    };
+    const serialized = toPatientAppointmentDto(appt, twoHoursFromNow);
 
     if (isFuture && isActiveStatus) {
       upcoming.push(serialized);

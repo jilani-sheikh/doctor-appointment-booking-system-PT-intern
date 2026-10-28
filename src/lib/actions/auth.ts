@@ -12,7 +12,7 @@ import {
   type RegisterInput,
   type OnboardingInput,
 } from "@/lib/validations/auth";
-import { Role, DoctorStatus } from "@/generated/prisma/client";
+import { Role, DoctorStatus, Prisma } from "@/generated/prisma/client";
 import { AuthError } from "next-auth";
 
 /**
@@ -163,9 +163,17 @@ export async function completeOnboardingAction(data: OnboardingInput) {
   }
 
   if (user.role) {
+    const redirectUrl =
+      user.role === Role.DOCTOR
+        ? "/doctor/dashboard"
+        : user.role === Role.ADMIN
+        ? "/admin/dashboard"
+        : "/patient/dashboard";
+
     return {
       success: false,
-      error: "Onboarding has already been completed for this account.",
+      error: "You have already completed onboarding.",
+      redirectUrl,
     };
   }
 
@@ -177,57 +185,79 @@ export async function completeOnboardingAction(data: OnboardingInput) {
     };
   }
 
-  try {
-    const validated = parsed.data;
+  const validated = parsed.data;
 
-    await db.$transaction(async (tx) => {
-      // Conditional update: only succeed if user.role is currently NULL
-      const updateResult = await tx.user.updateMany({
+  try {
+    if (validated.role === "PATIENT") {
+      await db.user.update({
         where: {
           id: user.id,
           role: null,
         },
         data: {
-          role: validated.role === "PATIENT" ? Role.PATIENT : Role.DOCTOR,
+          role: Role.PATIENT,
+          patient: {
+            create: {
+              dateOfBirth: new Date(validated.dateOfBirth),
+              gender: validated.gender,
+              phone: validated.phone,
+            },
+          },
         },
       });
-
-      if (updateResult.count === 0) {
-        throw new Error("Onboarding has already been completed or role is already assigned.");
-      }
-
-      if (validated.role === "PATIENT") {
-        await tx.patient.create({
-          data: {
-            userId: user.id,
-            dateOfBirth: new Date(validated.dateOfBirth),
-            gender: validated.gender,
-            phone: validated.phone,
+    } else if (validated.role === "DOCTOR") {
+      await db.user.update({
+        where: {
+          id: user.id,
+          role: null,
+        },
+        data: {
+          role: Role.DOCTOR,
+          doctor: {
+            create: {
+              specialization: validated.specialization,
+              qualification: validated.qualification,
+              consultationFee: validated.consultationFee,
+              experienceYears: validated.experienceYears,
+              bio: validated.bio || null,
+              status: DoctorStatus.PENDING,
+              isDemo: false,
+            },
           },
-        });
-      } else if (validated.role === "DOCTOR") {
-        await tx.doctor.create({
-          data: {
-            userId: user.id,
-            specialization: validated.specialization,
-            qualification: validated.qualification,
-            consultationFee: validated.consultationFee,
-            experienceYears: validated.experienceYears,
-            bio: validated.bio || null,
-            status: DoctorStatus.PENDING,
-            isDemo: false,
-          },
-        });
-      }
-    });
+        },
+      });
+    }
 
     const redirectUrl =
       validated.role === "PATIENT" ? "/patient/dashboard" : "/doctor/dashboard";
 
     return { success: true, redirectUrl };
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Failed to complete onboarding.";
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+      // User record not found or role was already non-null (concurrent submission / already onboarded)
+      const existingUser = await db.user.findUnique({
+        where: { id: user.id },
+        select: { role: true },
+      });
+      const role = existingUser?.role || (validated.role === "DOCTOR" ? Role.DOCTOR : Role.PATIENT);
+      const redirectUrl =
+        role === Role.DOCTOR
+          ? "/doctor/dashboard"
+          : role === Role.ADMIN
+          ? "/admin/dashboard"
+          : "/patient/dashboard";
+
+      return {
+        success: false,
+        error: "You have already completed onboarding.",
+        redirectUrl,
+      };
+    }
+
     console.error("[Medrella Onboarding Error]:", err);
-    return { success: false, error: message };
+    return {
+      success: false,
+      error: "Failed to complete onboarding. Please try again.",
+    };
   }
 }

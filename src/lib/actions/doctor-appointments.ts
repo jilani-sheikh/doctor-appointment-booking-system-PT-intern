@@ -2,7 +2,7 @@
 
 import { requireRole } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { Role, DoctorStatus, AppointmentStatus, SlotStatus } from "@/generated/prisma/client";
+import { Role, DoctorStatus, AppointmentStatus, SlotStatus, Prisma } from "@/generated/prisma/client";
 import { revalidatePath } from "next/cache";
 
 type AllowedDoctorTransition = "CONFIRMED" | "CANCELLED" | "COMPLETED" | "NO_SHOW";
@@ -82,22 +82,25 @@ export async function updateDoctorAppointmentStatusAction(
   try {
     if (targetStatus === "CANCELLED") {
       // In a single atomic transaction: mark appointment cancelled and free slot back to AVAILABLE
-      await db.$transaction(async (tx) => {
-        await tx.appointment.update({
-          where: { id: appointmentId },
-          data: {
-            status: AppointmentStatus.CANCELLED,
-            cancelledAt: new Date(),
-          },
-        });
+      await db.$transaction(
+        async (tx) => {
+          await tx.appointment.update({
+            where: { id: appointmentId },
+            data: {
+              status: AppointmentStatus.CANCELLED,
+              cancelledAt: new Date(),
+            },
+          });
 
-        await tx.availability.update({
-          where: { id: appointment.availabilityId },
-          data: {
-            status: SlotStatus.AVAILABLE,
-          },
-        });
-      });
+          await tx.availability.update({
+            where: { id: appointment.availabilityId },
+            data: {
+              status: SlotStatus.AVAILABLE,
+            },
+          });
+        },
+        { maxWait: 10000, timeout: 20000 }
+      );
     } else {
       await db.appointment.update({
         where: { id: appointmentId },
@@ -118,6 +121,22 @@ export async function updateDoctorAppointmentStatusAction(
       message: `Appointment status updated to ${targetStatus.toLowerCase()}.`,
     };
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2025") {
+        return {
+          success: false,
+          error: "The appointment or slot could not be found.",
+        };
+      }
+      if (error.code === "P2028") {
+        console.error("[Medrella Doctor Status Update] Prisma transaction API error (P2028):", error);
+        return {
+          success: false,
+          error: "Operation timed out or connection was interrupted. Please try again.",
+        };
+      }
+    }
+
     console.error("[Medrella Doctor Status Update] Error:", error);
     return {
       success: false,

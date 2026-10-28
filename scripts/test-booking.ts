@@ -31,7 +31,7 @@ async function runConcurrentBookingTest() {
   try {
     // 1. Verify partial unique index exists
     const indexes = (await db.$queryRaw`
-      SELECT indexname, indexdef 
+      SELECT indexname::text AS indexname, indexdef 
       FROM pg_indexes 
       WHERE tablename = 'appointments' AND indexname = 'appointments_availability_id_active_unique';
     `) as Array<{ indexname: string; indexdef: string }>;
@@ -113,7 +113,8 @@ async function runConcurrentBookingTest() {
     // Concurrency test helper replicating transaction logic
     async function bookSlot(patientId: string, slotId: string) {
       const oneHourFromNow = new Date(Date.now() + 60 * 60 * 1000);
-      return db.$transaction(async (tx) => {
+      return db.$transaction(
+        async (tx) => {
         const updated = await tx.availability.updateMany({
           where: {
             id: slotId,
@@ -135,7 +136,9 @@ async function runConcurrentBookingTest() {
             status: AppointmentStatus.PENDING,
           },
         });
-      });
+        },
+        { maxWait: 10000, timeout: 20000 }
+      );
     }
 
     // Fire both concurrently

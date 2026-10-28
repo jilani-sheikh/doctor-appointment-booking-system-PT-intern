@@ -4,7 +4,8 @@ import { requireRole } from "@/lib/auth";
 import { Role, DoctorStatus, AppointmentStatus } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { getTodayISTDateString, getISTDateString } from "@/lib/time";
-import { DoctorAppointmentsView, type SerializedDoctorAppointment } from "./doctor-appointments-view";
+import { DoctorAppointmentsView } from "./doctor-appointments-view";
+import { toDoctorAppointmentDto, type SerializedDoctorAppointment } from "@/lib/serializers";
 import { Calendar, Stethoscope, ShieldAlert } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 
@@ -79,22 +80,7 @@ export default async function DoctorAppointmentsPage() {
       appt.status === AppointmentStatus.CANCELLED ||
       appt.status === AppointmentStatus.NO_SHOW;
 
-    const serialized: SerializedDoctorAppointment = {
-      id: appt.id,
-      status: appt.status,
-      reason: appt.reason,
-      createdAt: appt.createdAt.toISOString(),
-      cancelledAt: appt.cancelledAt ? appt.cancelledAt.toISOString() : null,
-      slotStartTime: appt.availability.startTime.toISOString(),
-      slotEndTime: appt.availability.endTime.toISOString(),
-      isPastStartTime: now >= appt.availability.startTime,
-      patient: {
-        id: appt.patient.id,
-        name: appt.patient.user.name ?? "Patient",
-        phone: appt.patient.phone,
-        gender: appt.patient.gender,
-      },
-    };
+    const serialized = toDoctorAppointmentDto(appt, now);
 
     if (isTerminal) {
       history.push(serialized);

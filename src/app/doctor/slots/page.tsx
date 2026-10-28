@@ -3,7 +3,8 @@ import { Role, DoctorStatus } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { formatDateIST } from "@/lib/time";
 import { SlotGeneratorForm } from "./slot-form";
-import { SlotList, type SerializedSlot } from "./slot-list";
+import { SlotList } from "./slot-list";
+import { toSlotDto, type SerializedSlot } from "@/lib/serializers";
 import { Clock, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
@@ -71,12 +72,7 @@ export default async function DoctorSlotsPage() {
       slotsGrouped[dateKey] = [];
     }
 
-    slotsGrouped[dateKey].push({
-      id: slot.id,
-      startTime: slot.startTime.toISOString(),
-      endTime: slot.endTime.toISOString(),
-      status: slot.status,
-    });
+    slotsGrouped[dateKey].push(toSlotDto(slot));
   }
 
   return (

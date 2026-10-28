@@ -4,6 +4,9 @@ import { Navbar } from "@/components/layout/navbar";
 import { Footer } from "@/components/layout/footer";
 import { Toaster } from "@/components/ui/sonner";
 import { getCurrentUser } from "@/lib/auth";
+import { toNavUser } from "@/lib/serializers";
+
+export const runtime = "nodejs";
 
 export const metadata: Metadata = {
   title: "Medrella — Doctor Appointment Booking Application",
@@ -18,7 +21,8 @@ export default async function RootLayout({
 }>) {
   let user = null;
   try {
-    user = await getCurrentUser();
+    const currentUser = await getCurrentUser();
+    user = toNavUser(currentUser);
   } catch (err) {
     console.warn("[RootLayout] Failed to resolve current user, defaulting to null:", err);
   }

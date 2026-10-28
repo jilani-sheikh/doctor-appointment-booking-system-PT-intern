@@ -3,7 +3,8 @@ import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { Role } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
-import { DoctorsTable, type SerializedAdminDoctor } from "./doctors-table";
+import { DoctorsTable } from "./doctors-table";
+import { toAdminDoctorDto, type SerializedAdminDoctor } from "@/lib/serializers";
 import { Stethoscope, ArrowLeft } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 
@@ -30,18 +31,7 @@ export default async function AdminDoctorsPage() {
     ],
   });
 
-  const doctors: SerializedAdminDoctor[] = rawDoctors.map((doc) => ({
-    id: doc.id,
-    name: doc.user.name ?? "Practitioner",
-    email: doc.user.email ?? "—",
-    specialization: doc.specialization,
-    qualification: doc.qualification,
-    consultationFee: Number(doc.consultationFee),
-    experienceYears: doc.experienceYears,
-    status: doc.status,
-    isDemo: doc.isDemo,
-    createdAt: doc.createdAt.toISOString(),
-  }));
+  const doctors: SerializedAdminDoctor[] = rawDoctors.map(toAdminDoctorDto);
 
   return (
     <div className="container mx-auto max-w-6xl px-4 sm:px-6 py-8 space-y-8">

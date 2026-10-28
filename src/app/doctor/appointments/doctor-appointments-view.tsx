@@ -19,23 +19,8 @@ import {
 } from "lucide-react";
 import { formatDateTimeIST, formatTimeIST } from "@/lib/time";
 import type { AppointmentStatus } from "@/generated/prisma/client";
-
-export interface SerializedDoctorAppointment {
-  id: string;
-  status: AppointmentStatus;
-  reason?: string | null;
-  createdAt: string;
-  cancelledAt?: string | null;
-  slotStartTime: string;
-  slotEndTime: string;
-  isPastStartTime: boolean;
-  patient: {
-    id: string;
-    name: string;
-    phone?: string | null;
-    gender?: string | null;
-  };
-}
+import type { SerializedDoctorAppointment } from "@/lib/serializers";
+export type { SerializedDoctorAppointment };
 
 interface DoctorAppointmentsViewProps {
   todayAppointments: SerializedDoctorAppointment[];
