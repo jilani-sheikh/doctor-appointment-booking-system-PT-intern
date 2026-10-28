@@ -52,8 +52,14 @@ All environment variables are validated lazily on demand (`src/lib/env.ts`):
 - When an operation requiring credentials is run (e.g. initiating Google OAuth or running a database query), Zod validates the specific variable and provides an explicit, actionable error message naming the exact missing variable.
 - `prisma.config.ts` strictly prevents migrations from running if `DIRECT_URL` is missing.
 
-### 4. Server-Only Database Client
-The database client (`src/lib/db/index.ts`) enforces `import "server-only"` and uses a lazy singleton pattern on `globalThis`. The `@prisma/adapter-neon` WebSocket connection pool is created only when SQL queries are executed, preventing connection leaks during development hot-reloads and preventing database credentials from ever leaking into client bundles.
+### 4. Server-Only Database Client & Serverless Lifecycle
+The database client (`src/lib/db/index.ts`) enforces `import "server-only"` and maintains a lazy singleton pattern on `globalThis` across both development and production serverless invocations. The `@prisma/adapter-neon` WebSocket connection pool is created only when SQL queries are executed, with `connectionTimeoutMillis: 10000` to smoothly handle Neon compute cold starts without premature timeouts.
+
+### 5. Vercel Deployment & Region Configuration
+When deploying to Vercel:
+- **Function Region (`preferredRegion`):** Ensure your Vercel Function Region (Settings > Functions > Function Region) matches the geographical region of your Neon PostgreSQL database (e.g. `iad1` (Washington, D.C.) or `cle1` (Cleveland) for Neon databases hosted in AWS `us-east-2`). Placing functions near the database avoids unnecessary cross-continental WebSocket round-trip latencies.
+- **Production Environment Variables:** Set `DATABASE_URL` (strictly the pooled connection containing `-pooler`), `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, and `ADMIN_EMAILS`. Do not set `DIRECT_URL` as `DATABASE_URL`.
+- **Neon Compute Autosuspend:** Neon compute instances on free plans sleep after 5 minutes of inactivity. When a cold start occurs, waking the compute node may take 2–5 seconds. All interactive transactions specify `{ maxWait: 10000, timeout: 20000 }` to tolerate cold starts.
 
 ---
 

@@ -67,35 +67,38 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
   }
 
   try {
-    const appointment = await db.$transaction(async (tx) => {
-      // 1. Conditionally lock and mark slot as BOOKED
-      const updatedSlot = await tx.availability.updateMany({
-        where: {
-          id: availabilityId,
-          status: SlotStatus.AVAILABLE,
-          startTime: { gt: oneHourFromNow },
-        },
-        data: {
-          status: SlotStatus.BOOKED,
-        },
-      });
+    const appointment = await db.$transaction(
+      async (tx) => {
+        // 1. Conditionally lock and mark slot as BOOKED
+        const updatedSlot = await tx.availability.updateMany({
+          where: {
+            id: availabilityId,
+            status: SlotStatus.AVAILABLE,
+            startTime: { gt: oneHourFromNow },
+          },
+          data: {
+            status: SlotStatus.BOOKED,
+          },
+        });
 
-      if (updatedSlot.count !== 1) {
-        throw new Error("SLOT_UNAVAILABLE");
-      }
+        if (updatedSlot.count !== 1) {
+          throw new Error("SLOT_UNAVAILABLE");
+        }
 
-      // 2. Create Appointment record
-      const appt = await tx.appointment.create({
-        data: {
-          patientId,
-          availabilityId,
-          reason,
-          status: AppointmentStatus.PENDING,
-        },
-      });
+        // 2. Create Appointment record
+        const appt = await tx.appointment.create({
+          data: {
+            patientId,
+            availabilityId,
+            reason,
+            status: AppointmentStatus.PENDING,
+          },
+        });
 
-      return appt;
-    });
+        return appt;
+      },
+      { maxWait: 10000, timeout: 20000 }
+    );
 
     revalidatePath(`/doctors/${slot.doctorId}`);
     revalidatePath("/patient/appointments");
@@ -117,6 +120,22 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
         success: false,
         error: "This slot is no longer available. Please select another consultation time.",
       };
+    }
+
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2025") {
+        return {
+          success: false,
+          error: "The requested slot is no longer available. Please select another consultation time.",
+        };
+      }
+      if (error.code === "P2028") {
+        console.error("[Medrella Booking Action] Prisma transaction API error (P2028):", error);
+        return {
+          success: false,
+          error: "The booking service timed out or was interrupted. Please try again in a moment.",
+        };
+      }
     }
 
     console.error("[Medrella Booking Action] Error booking appointment:", error);
@@ -172,24 +191,27 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
   }
 
   try {
-    await db.$transaction(async (tx) => {
-      // 1. Mark appointment cancelled
-      await tx.appointment.update({
-        where: { id: appointmentId },
-        data: {
-          status: AppointmentStatus.CANCELLED,
-          cancelledAt: new Date(),
-        },
-      });
+    await db.$transaction(
+      async (tx) => {
+        // 1. Mark appointment cancelled
+        await tx.appointment.update({
+          where: { id: appointmentId },
+          data: {
+            status: AppointmentStatus.CANCELLED,
+            cancelledAt: new Date(),
+          },
+        });
 
-      // 2. Free availability slot back to AVAILABLE
-      await tx.availability.update({
-        where: { id: appointment.availabilityId },
-        data: {
-          status: SlotStatus.AVAILABLE,
-        },
-      });
-    });
+        // 2. Free availability slot back to AVAILABLE
+        await tx.availability.update({
+          where: { id: appointment.availabilityId },
+          data: {
+            status: SlotStatus.AVAILABLE,
+          },
+        });
+      },
+      { maxWait: 10000, timeout: 20000 }
+    );
 
     revalidatePath("/patient/appointments");
     revalidatePath("/patient/dashboard");
@@ -202,6 +224,22 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
       message: "Appointment successfully cancelled and consultation slot freed.",
     };
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2025") {
+        return {
+          success: false,
+          error: "The appointment or slot could not be found.",
+        };
+      }
+      if (error.code === "P2028") {
+        console.error("[Medrella Cancel Action] Prisma transaction API error (P2028):", error);
+        return {
+          success: false,
+          error: "Cancellation timed out or was interrupted. Please try again.",
+        };
+      }
+    }
+
     console.error("[Medrella Cancel Action] Error cancelling appointment:", error);
     return {
       success: false,

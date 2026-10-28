@@ -14,14 +14,14 @@ declare global {
 
 function createPrismaClient(): PrismaClient {
   const connectionString = getDatabaseUrl();
-  const adapter = new PrismaNeon({ connectionString });
+  const adapter = new PrismaNeon({
+    connectionString,
+    connectionTimeoutMillis: 10000,
+  });
   return new PrismaClient({ adapter });
 }
 
 function getPrismaInstance(): PrismaClient {
-  if (process.env.NODE_ENV === "production") {
-    return createPrismaClient();
-  }
   if (!globalThis.__medrella_prisma) {
     globalThis.__medrella_prisma = createPrismaClient();
   }

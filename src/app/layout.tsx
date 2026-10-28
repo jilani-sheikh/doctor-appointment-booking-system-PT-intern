@@ -5,6 +5,8 @@ import { Footer } from "@/components/layout/footer";
 import { Toaster } from "@/components/ui/sonner";
 import { getCurrentUser } from "@/lib/auth";
 
+export const runtime = "nodejs";
+
 export const metadata: Metadata = {
   title: "Medrella — Doctor Appointment Booking Application",
   description:
