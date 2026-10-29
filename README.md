@@ -322,15 +322,59 @@ The queue estimation engine (`src/lib/queue.ts`) calculates approximate start an
 
 ---
 
-## 🌊 Wave-Based Arrival Management
+## 🌊 Doctor-Owned Automatic Wave Scheduling (Arrival Windows over Fixed Slots)
 
-Medrella prevents clinic lobby overcrowding through arrival wave scheduling (`src/lib/waves.ts`):
+Medrella prevents clinic lobby congestion and patient waiting room anxiety through doctor-owned arrival wave scheduling (`src/lib/waves.ts`):
 
-- **Deterministic Auto-Generation:** Administrators can divide any operational day into sequential windows of length `windowMinutes` (e.g. 60 min) with default capacity (e.g. 4 patients) for any medical department.
-- **Capacity & Overflow Protection:** Candidates are grouped into matching waves by department, time window, and optional stream filter. Appointments exceeding capacity are tracked in `overflowByWaveId` and `unassigned`.
-- **Publishing Gate:** A wave cannot be published if unassigned overflow exists, unless the administrator explicitly marks the "Acknowledge Overflow" confirmation checkbox.
-- **Patient Arrival Notifications:** Upon publishing, assigned patients receive an in-app notification with their localized IST arrival window (e.g. `Arrive between 10:00 AM and 11:00 AM (IST)`).
-- **Post-Publishing Additions:** Late appointments confirmed after a wave is published are added only if capacity remains; otherwise, they are designated as unassigned for manual staff review.
+- **Core Product Invariant:** Consultation slots decide **when the doctor sees** each patient (fixed length, one patient each). **Nothing about waves changes slot times or consultation order.** Waves only decide **when the patient should arrive**.
+- **Live Queue Separation:** The doctor calls a patient only in the Live Queue (`Start Consultation`). Waves never start or reorder consultations.
+- **Admin Boundary:** The Admin portal is strictly doctor validation/approval and platform oversight. No wave management features exist for admins.
+- **Doctor Preferences:** The doctor sets three defaults once:
+  1. `waveWindowMinutes` (default: 30 min): consultation chunking window.
+  2. `waveCapacity` (default: 2–3 patients): maximum patients per arrival wave.
+  3. `arrivalBufferMinutes` (default: 15 min): arrival buffer before the first consultation slot in the wave.
+  4. `autoPublishWaves` (default: false): whether generated waves are published immediately or kept as drafts.
+
+### 📐 Realistic Worked Example (15-Minute Slots)
+
+Consider a doctor with 15-minute consultation slots on a morning schedule:
+- **Slots:**
+  - Patient 1: 10:00 AM – 10:15 AM
+  - Patient 2: 10:15 AM – 10:30 AM
+  - Patient 3: 10:30 AM – 10:45 AM
+- **Doctor Preferences:** `windowMinutes = 30`, `capacity = 2`, `buffer = 15`.
+
+**Algorithm Execution:**
+1. **Chunk 1:** Covers `[10:00, 10:30)`. Captures Patient 1 (10:00) and Patient 2 (10:15). Chunk size = 2 (meets capacity 2).
+   - First slot in group: `10:00 AM`.
+   - Arrival Window: `10:00 - 15 min = 09:45 AM` to `10:00 AM`.
+   - **Wave 1 Arrival Window:** `09:45 AM - 10:00 AM (IST)`.
+   - Patients assigned: Patient 1 & Patient 2.
+2. **Chunk 2:** Covers `[10:30, 11:00)`. Captures Patient 3 (10:30). Chunk size = 1 (within capacity 2).
+   - First slot in group: `10:30 AM`.
+   - Arrival Window: `10:30 - 15 min = 10:15 AM` to `10:30 AM`.
+   - **Wave 2 Arrival Window:** `10:15 AM - 10:30 AM (IST)`.
+   - Patients assigned: Patient 3.
+
+> **Key Invariant:** Consultation slots remain strictly **10:00 AM, 10:15 AM, and 10:30 AM**. Only the patient's requested arrival window is communicated (`"Arrive between 09:45 AM and 10:00 AM (IST). Your consultation slot is 10:00 AM."`).
+
+### 🛡️ System Invariants & Rules
+
+1. **Overlap Validation Rule:** Overlap validation applies to **MANUAL** wave creation only (preventing doctors from scheduling contradictory manual arrival windows). **Generated waves may legitimately overlap** when the arrival buffer exceeds the gap between groups' first slots and are never rejected or altered.
+2. **Draft Visibility Invariant:** Patient appointment cards, notifications, and queue badges show an arrival window **ONLY** when `wave.status = PUBLISHED`. `DRAFT` waves are strictly invisible to patients. Re-generating waves deletes existing `DRAFT` waves (setting appointments' `waveId = null`), and `PUBLISHED` waves are permanent and never deleted or altered.
+3. **Past-Window Clamping & Expired Arrival Rule:**
+   - If `arrivalStart < now`, the window start is clamped to `now`.
+   - If the arrival window has already passed (`arrivalEnd <= now`):
+     - Already `CHECKED_IN` (or `IN_CONSULTATION`/`COMPLETED`) patients are **NOT unassigned**: they remain in their wave and count as arrived.
+     - Only `CONFIRMED` (not yet arrived) patients whose window has passed go to "unassigned" with the specific reason `"Arrival window expired"`.
+4. **Race-Safe Concurrency & Idempotency:** Wave generation locks the doctor row (`SELECT id FROM doctors WHERE id = $1 FOR UPDATE`) inside a short transaction (`{ maxWait: 10000, timeout: 20000 }`), guaranteeing that concurrent clicks produce no duplicate draft waves and leave published waves untouched.
+5. **Deduplicated In-App Notifications:** When published, patients receive a `WAVE_PUBLISHED` notification. If an appointment is moved to another wave, a notification is sent for the new window only. Notifications are deduplicated by target wave ID/href.
+
+### ⚠️ System Limitations
+
+- **Trigger Model:** Waves are generated on-demand when the doctor clicks **Generate Drafts** or **Generate & Publish** in `/doctor/waves`. Nothing runs on a background cron or automatic schedule.
+- **Single-Doctor Scope:** Waves are strictly doctor-owned. There is no cross-doctor wave pooling or multi-practitioner coordination.
+- **In-App Notifications Only:** Notifications are delivered via Medrella's in-app notification center. SMS, WhatsApp, and email delivery channels are not included.
 
 ---
 

@@ -1,7 +1,7 @@
 import { Metadata } from "next";
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
-import { Role, DoctorStatus, AppointmentStatus, WaveStatus } from "@/generated/prisma/client";
+import { Role, DoctorStatus, AppointmentStatus } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,15 +19,12 @@ import {
   Stethoscope,
   Calendar,
   ShieldCheck,
-  Waves,
-  ArrowRight,
 } from "lucide-react";
 import { formatDateTimeIST } from "@/lib/time";
-import { calculateWaveMetrics, type WaveTarget } from "@/lib/waves";
 
 export const metadata: Metadata = {
   title: "Admin Dashboard — Medrella",
-  description: "Administrative oversight, practitioner verifications, system metrics, and arrival wave monitoring.",
+  description: "Administrative oversight, practitioner verifications, and system metrics.",
 };
 
 export default async function AdminDashboardPage() {
@@ -48,7 +45,6 @@ export default async function AdminDashboardPage() {
     completedAppointments,
     cancelledAppointments,
     noShowAppointments,
-    publishedWaves,
     recentUsers,
     recentAppointments,
   ] = await Promise.all([
@@ -66,12 +62,6 @@ export default async function AdminDashboardPage() {
     db.appointment.count({ where: { status: AppointmentStatus.COMPLETED } }),
     db.appointment.count({ where: { status: AppointmentStatus.CANCELLED } }),
     db.appointment.count({ where: { status: AppointmentStatus.NO_SHOW } }),
-    db.wave.findMany({
-      where: { status: WaveStatus.PUBLISHED },
-      include: {
-        appointments: { select: { status: true, checkedInAt: true } },
-      },
-    }),
     db.user.findMany({
       take: 20,
       orderBy: { createdAt: "desc" },
@@ -104,31 +94,6 @@ export default async function AdminDashboardPage() {
       },
     }),
   ]);
-
-  // Calculate aggregate wave performance metrics (Amendment 5a)
-  let totalWaveExpected = 0;
-  let totalWaveOnTime = 0;
-  let totalWaveLate = 0;
-  let totalWaveNoShow = 0;
-  let totalWaveNotYetArrived = 0;
-
-  for (const wave of publishedWaves) {
-    const target: WaveTarget = {
-      id: wave.id,
-      specialization: wave.specialization,
-      windowStart: wave.windowStart,
-      windowEnd: wave.windowEnd,
-      capacity: wave.capacity,
-      stream: wave.stream,
-      status: wave.status,
-    };
-    const m = calculateWaveMetrics(target, wave.appointments);
-    totalWaveExpected += m.expectedArrivals;
-    totalWaveOnTime += m.onTimeCheckIns;
-    totalWaveLate += m.lateCheckIns;
-    totalWaveNoShow += m.noShows;
-    totalWaveNotYetArrived += m.notYetArrived;
-  }
 
   const getRoleBadge = (role: Role | null) => {
     switch (role) {
@@ -178,18 +143,11 @@ export default async function AdminDashboardPage() {
             Admin Overview & Analytics
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Monitor platform activity, practitioner verifications, wave arrivals, and system state.
+            Monitor platform activity, practitioner verifications, and system state.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          <Link
-            href="/admin/waves"
-            className={buttonVariants({ variant: "outline", size: "sm" })}
-          >
-            <Waves className="h-4 w-4 mr-1.5" />
-            Arrival Waves
-          </Link>
           <Link
             href="/admin/doctors"
             className={buttonVariants({ variant: "default", size: "sm" })}
@@ -202,60 +160,6 @@ export default async function AdminDashboardPage() {
               </span>
             )}
           </Link>
-        </div>
-      </div>
-
-      {/* Wave Performance Summary Strip (Amendment 5a) */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-bold text-foreground flex items-center gap-2">
-            <Waves className="h-4 w-4 text-primary" />
-            Published Arrival Waves — Expected vs. Actual Arrivals
-          </h2>
-          <Link
-            href="/admin/waves"
-            className="text-xs font-semibold text-primary hover:underline flex items-center gap-1"
-          >
-            Manage Waves ({publishedWaves.length} published) <ArrowRight className="h-3 w-3" />
-          </Link>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          <Card className="border-border shadow-xs">
-            <CardContent className="p-4">
-              <span className="text-xs text-muted-foreground">Expected Arrivals</span>
-              <div className="text-2xl font-bold text-foreground mt-1">{totalWaveExpected}</div>
-              <span className="text-[10px] text-muted-foreground">Assigned to waves</span>
-            </CardContent>
-          </Card>
-          <Card className="border-border shadow-xs">
-            <CardContent className="p-4">
-              <span className="text-xs text-muted-foreground">On-Time Arrivals</span>
-              <div className="text-2xl font-bold text-emerald-600 mt-1">{totalWaveOnTime}</div>
-              <span className="text-[10px] text-muted-foreground">Within wave window</span>
-            </CardContent>
-          </Card>
-          <Card className="border-border shadow-xs">
-            <CardContent className="p-4">
-              <span className="text-xs text-muted-foreground">Late Check-Ins</span>
-              <div className="text-2xl font-bold text-rose-600 mt-1">{totalWaveLate}</div>
-              <span className="text-[10px] text-muted-foreground">Past window end</span>
-            </CardContent>
-          </Card>
-          <Card className="border-border shadow-xs">
-            <CardContent className="p-4">
-              <span className="text-xs text-muted-foreground">No-Shows</span>
-              <div className="text-2xl font-bold text-amber-600 mt-1">{totalWaveNoShow}</div>
-              <span className="text-[10px] text-muted-foreground">Recorded absent</span>
-            </CardContent>
-          </Card>
-          <Card className="col-span-2 sm:col-span-1 border-border shadow-xs">
-            <CardContent className="p-4">
-              <span className="text-xs text-muted-foreground">Not Yet Arrived</span>
-              <div className="text-2xl font-bold text-blue-600 mt-1">{totalWaveNotYetArrived}</div>
-              <span className="text-[10px] text-muted-foreground">Awaiting check-in</span>
-            </CardContent>
-          </Card>
         </div>
       </div>
 

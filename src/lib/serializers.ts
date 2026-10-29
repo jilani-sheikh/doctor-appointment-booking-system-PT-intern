@@ -360,6 +360,8 @@ export interface SerializedDoctorQueueItem {
   canEndConsultation: boolean;
   canNoShow: boolean;
   canCancel: boolean;
+  arrivalWindow?: string | null;
+  waveStatus?: WaveStatus | null;
 }
 
 export function toDoctorQueueItemDto(
@@ -380,6 +382,11 @@ export function toDoctorQueueItemDto(
       startTime: Date;
       endTime: Date;
     };
+    wave?: {
+      status: WaveStatus;
+      windowStart: Date;
+      windowEnd: Date;
+    } | null;
   },
   estimate: {
     expectedStart: Date;
@@ -402,6 +409,11 @@ export function toDoctorQueueItemDto(
     appt.status === "PENDING" ||
     appt.status === "CONFIRMED" ||
     appt.status === "CHECKED_IN";
+
+  const arrivalWindow =
+    appt.wave && appt.wave.status === "PUBLISHED"
+      ? formatWaveArrivalWindowIST(appt.wave.windowStart, appt.wave.windowEnd)
+      : null;
 
   return {
     id: appt.id,
@@ -427,6 +439,8 @@ export function toDoctorQueueItemDto(
     canEndConsultation,
     canNoShow: noShowEval.allowed,
     canCancel,
+    arrivalWindow,
+    waveStatus: appt.wave?.status ?? null,
   };
 }
 
@@ -467,6 +481,7 @@ export function toDoctorTimeOffDto(
  */
 export interface SerializedWave {
   id: string;
+  doctorId?: string | null;
   specialization: string;
   windowStart: string;
   windowEnd: string;
@@ -486,6 +501,7 @@ export interface SerializedWave {
 export function toWaveDto(
   wave: {
     id: string;
+    doctorId?: string | null;
     specialization: string;
     windowStart: Date;
     windowEnd: Date;
@@ -508,6 +524,7 @@ export function toWaveDto(
 ): SerializedWave {
   return {
     id: wave.id,
+    doctorId: wave.doctorId ?? null,
     specialization: wave.specialization,
     windowStart: wave.windowStart.toISOString(),
     windowEnd: wave.windowEnd.toISOString(),

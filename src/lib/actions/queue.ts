@@ -353,7 +353,7 @@ export async function setPriorityStreamAction(appointmentId: string) {
 
     revalidatePath("/doctor/queue");
     revalidatePath("/doctor/appointments");
-    revalidatePath("/admin/waves");
+    revalidatePath("/doctor/waves");
 
     return { success: true, message: "Appointment stream updated to Priority." };
   } catch (error) {

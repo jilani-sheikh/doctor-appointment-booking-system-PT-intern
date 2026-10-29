@@ -141,13 +141,18 @@ model Doctor {
   consultationFee Decimal        @map("consultation_fee") @db.Decimal(10, 2)
   bio             String?        @db.Text
   experienceYears Int?           @map("experience_years")
-  status          DoctorStatus   @default(PENDING)
-  isDemo          Boolean        @default(false) @map("is_demo")
-  createdAt       DateTime       @default(now()) @map("created_at")
+  status               DoctorStatus    @default(PENDING)
+  isDemo               Boolean         @default(false) @map("is_demo")
+  waveWindowMinutes    Int             @default(30) @map("wave_window_minutes")
+  waveCapacity         Int             @default(3) @map("wave_capacity")
+  arrivalBufferMinutes Int             @default(15) @map("arrival_buffer_minutes")
+  autoPublishWaves     Boolean         @default(false) @map("auto_publish_waves")
+  createdAt            DateTime        @default(now()) @map("created_at")
 
   user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   availabilities  Availability[]
   timeOffs        DoctorTimeOff[]
+  waves           Wave[]
   waitlistEntries WaitlistEntry[]
 
   @@map("doctors")
@@ -208,22 +213,25 @@ model Appointment {
 }
 
 model Wave {
-  id             String      @id @default(cuid())
+  id             String       @id @default(cuid())
+  doctorId       String?      @map("doctor_id")
   specialization String
-  windowStart    DateTime    @map("window_start")
-  windowEnd      DateTime    @map("window_end")
+  windowStart    DateTime     @map("window_start")
+  windowEnd      DateTime     @map("window_end")
   capacity       Int
   stream         VisitStream?
-  status         WaveStatus  @default(DRAFT)
-  notes          String?     @db.Text
-  createdById    String      @map("created_by_id")
-  publishedAt    DateTime?   @map("published_at")
-  createdAt      DateTime    @default(now()) @map("created_at")
-  updatedAt      DateTime    @updatedAt @map("updated_at")
+  status         WaveStatus   @default(DRAFT)
+  notes          String?      @db.Text
+  createdById    String       @map("created_by_id")
+  publishedAt    DateTime?    @map("published_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
 
+  doctor       Doctor?       @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   createdBy    User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
   appointments Appointment[]
 
+  @@index([doctorId, windowStart])
   @@index([specialization, windowStart])
   @@map("waves")
 }

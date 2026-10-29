@@ -17,6 +17,7 @@ import {
   Phone,
   AlertCircle,
   Activity,
+  Waves,
 } from "lucide-react";
 import {
   doctorMarkArrivedAction,
@@ -134,6 +135,8 @@ export function DoctorQueueView({ queueItems, summary }: DoctorQueueViewProps) {
     }
   };
 
+  const nextPatientToCall = queueItems.find((item) => item.status === "CHECKED_IN");
+
   return (
     <div className="space-y-6">
       {/* Summary Strip */}
@@ -177,6 +180,67 @@ export function DoctorQueueView({ queueItems, summary }: DoctorQueueViewProps) {
         <AlertCircle className="h-4 w-4 text-primary shrink-0" />
         <span>{EMERGENCY_DISCLAIMER}</span>
       </div>
+
+      {/* Next Patient to Call Highlight Card */}
+      {nextPatientToCall && (
+        <Card className="border-2 border-blue-500/80 bg-gradient-to-r from-blue-50/50 via-indigo-50/20 to-transparent dark:from-blue-950/30 dark:via-indigo-950/10 dark:to-transparent shadow-md">
+          <CardContent className="p-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-600 text-white uppercase tracking-wider">
+                    <Play className="h-3 w-3 fill-current" /> Next Patient to Call
+                  </span>
+                  <span className="text-xs text-muted-foreground">Queue #{nextPatientToCall.queuePosition}</span>
+                  {nextPatientToCall.arrivalWindow && (
+                    <Badge variant="outline" className="border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-[10px] flex items-center gap-1 font-medium">
+                      <Waves className="h-3 w-3" />
+                      Arrival Window: {nextPatientToCall.arrivalWindow}
+                    </Badge>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
+                    <User className="h-5 w-5 text-blue-600" />
+                    {nextPatientToCall.patientName}
+                  </h3>
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    Slot: {formatTimeIST(nextPatientToCall.scheduledStart)} - {formatTimeIST(nextPatientToCall.scheduledEnd)}
+                  </span>
+                  {nextPatientToCall.checkedInAt && (
+                    <span className="text-xs text-amber-700 dark:text-amber-400 font-medium">
+                      (Checked in at {formatTimeIST(nextPatientToCall.checkedInAt)})
+                    </span>
+                  )}
+                  {nextPatientToCall.patientPhone && (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Phone className="h-3 w-3" />
+                      {nextPatientToCall.patientPhone}
+                    </span>
+                  )}
+                </div>
+                {nextPatientToCall.reason && (
+                  <p className="text-xs text-muted-foreground pt-1">
+                    <strong>Complaint: </strong> {nextPatientToCall.reason}
+                  </p>
+                )}
+              </div>
+
+              <div className="shrink-0 flex items-center gap-2">
+                <Button
+                  size="default"
+                  disabled={isPending}
+                  onClick={() => handleStartConsultation(nextPatientToCall.id)}
+                  className="gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-sm"
+                >
+                  <Play className="h-4 w-4 fill-current" />
+                  Call Patient Now
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Live Queue Cards */}
       {queueItems.length === 0 ? (
@@ -222,6 +286,12 @@ export function DoctorQueueView({ queueItems, summary }: DoctorQueueViewProps) {
                           {streamConfig.label}
                         </span>
                         {getStatusBadge(item.status)}
+                        {item.arrivalWindow && (
+                          <Badge variant="outline" className="border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-[10px] flex items-center gap-1 font-medium">
+                            <Waves className="h-3 w-3" />
+                            Arrival: {item.arrivalWindow}
+                          </Badge>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">

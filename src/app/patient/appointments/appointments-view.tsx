@@ -19,6 +19,7 @@ import {
   RotateCcw,
   Activity,
   AlertCircle,
+  Waves,
 } from "lucide-react";
 import { formatDateTimeIST, formatTimeIST } from "@/lib/time";
 import { STREAM_CONFIGS } from "@/lib/streams";
@@ -196,15 +197,16 @@ export function AppointmentsView({
                       </span>
                       <span>•</span>
                       <span>Fee: ₹{appt.doctor.consultationFee.toLocaleString("en-IN")}</span>
-                      {appt.arrivalWindow && (
-                        <>
-                          <span>•</span>
-                          <span className="text-primary font-semibold">
-                            Arrival Window: {appt.arrivalWindow}
-                          </span>
-                        </>
-                      )}
                     </div>
+
+                    {appt.arrivalWindow && (
+                      <div className="rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 p-2.5 text-xs text-emerald-900 dark:text-emerald-200 flex items-center gap-2">
+                        <Waves className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        <span>
+                          Arrive between <strong>{appt.arrivalWindow.replace(" (IST)", "")} (IST)</strong>. Your consultation slot is <strong>{formatTimeIST(startDate)}</strong>.
+                        </span>
+                      </div>
+                    )}
 
                     {/* Live Queue Estimate details */}
                     {appt.queuePosition !== null && appt.queuePosition !== undefined && (

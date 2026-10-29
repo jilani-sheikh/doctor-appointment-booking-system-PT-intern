@@ -233,6 +233,7 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
           data: {
             status: AppointmentStatus.CANCELLED,
             cancelledAt: new Date(),
+            waveId: null,
           },
         });
 

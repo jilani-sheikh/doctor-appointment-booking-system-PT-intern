@@ -94,6 +94,7 @@ export async function createDoctorTimeOffAction(input: DoctorTimeOffInput) {
         data: {
           disruptedAt: now,
           disruptionReason: reason,
+          waveId: null,
         },
       });
 
