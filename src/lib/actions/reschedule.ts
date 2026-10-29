@@ -21,7 +21,7 @@ import { revalidatePath } from "next/cache";
  * Transaction Safety:
  * In a single short interactive transaction:
  * (a) Locks and books new slot (must be AVAILABLE and > 1 hr in advance)
- * (b) Reassigns appointment, resets status to PENDING if it was CONFIRMED, clears waveId, increments rescheduleCount
+ * (b) Reassigns appointment, preserves CONFIRMED status, clears waveId, increments rescheduleCount
  * (c) Releases old slot back to AVAILABLE using shared releaseSlot helper
  * Post-commit:
  * Dispatches notifications to doctor, patient, and waitlist for the freed slot.
@@ -105,12 +105,7 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
           throw new Error("SLOT_UNAVAILABLE");
         }
 
-        // (b) Update appointment
-        const nextStatus =
-          appointment.status === AppointmentStatus.CONFIRMED
-            ? AppointmentStatus.PENDING
-            : appointment.status;
-
+        // (b) Update appointment (stays CONFIRMED, clears waveId, increments rescheduleCount)
         await tx.appointment.update({
           where: { id: appointmentId },
           data: {
@@ -118,7 +113,6 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
             rescheduledFromAvailabilityId: oldAvailabilityId,
             rescheduleCount: { increment: 1 },
             waveId: null, // Clear wave assignment
-            status: nextStatus,
             disruptedAt: null, // Disruption resolved by rescheduling
             disruptionReason: null,
           },
@@ -127,7 +121,7 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
         // (c) Free the old slot using shared releaseSlot helper
         const oldRelease = await releaseSlot(tx, oldAvailabilityId);
 
-        return { oldRelease, nextStatus };
+        return { oldRelease };
       },
       { maxWait: 10000, timeout: 20000 }
     );
@@ -141,7 +135,7 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
       userId: user.id,
       type: NotificationType.APPOINTMENT_RESCHEDULED,
       title: "Appointment Rescheduled",
-      body: `Your consultation with Dr. ${doctorName} has been rescheduled to ${newSlotTimeFormatted}. Awaiting confirmation.`,
+      body: `Your consultation with Dr. ${doctorName} has been rescheduled to ${newSlotTimeFormatted}.`,
       href: "/patient/appointments",
     });
 
@@ -163,6 +157,8 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
     revalidatePath("/patient/dashboard");
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/dashboard");
+    revalidatePath("/doctor/queue");
+    revalidatePath("/doctor/waves");
     revalidatePath(`/doctors/${doctorId}`);
 
     return {

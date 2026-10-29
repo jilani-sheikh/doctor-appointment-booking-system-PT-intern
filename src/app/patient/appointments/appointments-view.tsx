@@ -80,7 +80,7 @@ export function AppointmentsView({
   const getStatusBadge = (status: AppointmentStatus) => {
     switch (status) {
       case "PENDING":
-        return <Badge variant="warning" className="text-[10px] uppercase font-semibold">Pending Confirmation</Badge>;
+        return <Badge variant="warning" className="text-[10px] uppercase font-semibold">Pending</Badge>;
       case "CONFIRMED":
         return <Badge variant="success" className="text-[10px] uppercase font-semibold">Confirmed</Badge>;
       case "CHECKED_IN":
