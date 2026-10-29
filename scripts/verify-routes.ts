@@ -104,7 +104,7 @@ async function verifyRoutes() {
   const patientDto = toPatientAppointmentDto(legacyWaveAppointment as any);
   console.log("Patient DTO arrival window for legacy published wave:", patientDto.arrivalWindow);
   assert.ok(patientDto.arrivalWindow !== null, "Patient linked to legacy PUBLISHED wave MUST see arrival window");
-  assert.ok(patientDto.arrivalWindow.includes("09:45 am"), "Arrival window must format legacy wave window start");
+  assert.ok(patientDto.arrivalWindow?.includes("09:45 am"), "Arrival window must format legacy wave window start");
 
   // Draft wave: patient should NOT see arrival window
   const draftWaveAppointment = {
