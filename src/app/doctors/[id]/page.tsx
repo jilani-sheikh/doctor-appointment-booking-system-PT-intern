@@ -72,6 +72,7 @@ export default async function DoctorDetailPage({ params }: DoctorDetailPageProps
   let doctor = null;
   let rawSlots: SlotQueryItem[] = [];
   let currentUser = null;
+  let isWaitlisted = false;
 
   try {
     currentUser = await getCurrentUser();
@@ -114,6 +115,18 @@ export default async function DoctorDetailPage({ params }: DoctorDetailPageProps
         startTime: "asc",
       },
     });
+
+    if (currentUser?.patient) {
+      const waitlistEntry = await db.waitlistEntry.findUnique({
+        where: {
+          patientId_doctorId: {
+            patientId: currentUser.patient.id,
+            doctorId: id,
+          },
+        },
+      });
+      isWaitlisted = Boolean(waitlistEntry);
+    }
   } catch (error: unknown) {
     // If notFound() was thrown, rethrow so Next.js handles 404
     if (
@@ -228,6 +241,7 @@ export default async function DoctorDetailPage({ params }: DoctorDetailPageProps
         slotsGrouped={slotsGrouped}
         currentUserRole={currentUser?.role ?? null}
         isAuthenticated={Boolean(currentUser)}
+        isWaitlisted={isWaitlisted}
       />
     </div>
   );

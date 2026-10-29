@@ -28,9 +28,34 @@ enum SlotStatus {
 enum AppointmentStatus {
   PENDING
   CONFIRMED
+  CHECKED_IN
+  IN_CONSULTATION
   COMPLETED
   CANCELLED
   NO_SHOW
+}
+
+enum VisitStream {
+  NEW_CONSULTATION
+  FOLLOW_UP
+  PRIORITY
+}
+
+enum WaveStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+}
+
+enum NotificationType {
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_RESCHEDULED
+  DOCTOR_ABSENCE
+  SLOT_AVAILABLE
+  WAVE_PUBLISHED
+  QUEUE_DELAY
+  GENERAL
 }
 
 model User {
@@ -48,6 +73,8 @@ model User {
   sessions      Session[]
   patient       Patient?
   doctor        Doctor?
+  wavesCreated  Wave[]
+  notifications Notification[]
 
   @@map("users")
 }
@@ -99,8 +126,9 @@ model Patient {
   phone       String?
   createdAt   DateTime      @default(now()) @map("created_at")
 
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  appointments Appointment[]
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointments    Appointment[]
+  waitlistEntries WaitlistEntry[]
 
   @@map("patients")
 }
@@ -117,42 +145,133 @@ model Doctor {
   isDemo          Boolean        @default(false) @map("is_demo")
   createdAt       DateTime       @default(now()) @map("created_at")
 
-  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  availabilities Availability[]
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  availabilities  Availability[]
+  timeOffs        DoctorTimeOff[]
+  waitlistEntries WaitlistEntry[]
 
   @@map("doctors")
 }
 
 model Availability {
-  id        String     @id @default(cuid())
-  doctorId  String     @map("doctor_id")
-  startTime DateTime   @map("start_time")
-  endTime   DateTime   @map("end_time")
-  status    SlotStatus @default(AVAILABLE)
-  createdAt DateTime   @default(now()) @map("created_at")
+  id                  String     @id @default(cuid())
+  doctorId            String     @map("doctor_id")
+  startTime           DateTime   @map("start_time")
+  endTime             DateTime   @map("end_time")
+  status              SlotStatus @default(AVAILABLE)
+  blockedByTimeOffId  String?    @map("blocked_by_time_off_id")
+  createdAt           DateTime   @default(now()) @map("created_at")
 
-  doctor       Doctor        @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  appointments Appointment[]
+  doctor                  Doctor         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  blockedByTimeOff        DoctorTimeOff? @relation(fields: [blockedByTimeOffId], references: [id], onDelete: SetNull)
+  appointments            Appointment[]
+  rescheduledAppointments Appointment[]  @relation("RescheduledFromAvailability")
 
   @@unique([doctorId, startTime])
   @@index([doctorId, startTime])
+  @@index([blockedByTimeOffId])
   @@map("availabilities")
 }
 
 model Appointment {
-  id             String            @id @default(cuid())
-  patientId      String            @map("patient_id")
-  availabilityId String            @map("availability_id")
-  reason         String?           @db.Text
-  status         AppointmentStatus @default(PENDING)
-  createdAt      DateTime          @default(now()) @map("created_at")
-  updatedAt      DateTime          @updatedAt @map("updated_at")
-  cancelledAt    DateTime?         @map("cancelled_at")
+  id                            String            @id @default(cuid())
+  patientId                     String            @map("patient_id")
+  availabilityId                String            @map("availability_id")
+  stream                        VisitStream       @default(NEW_CONSULTATION)
+  reason                        String?           @db.Text
+  status                        AppointmentStatus @default(PENDING)
+  checkedInAt                   DateTime?         @map("checked_in_at")
+  checkedInByUserId             String?           @map("checked_in_by_user_id")
+  actualStartAt                 DateTime?         @map("actual_start_at")
+  actualEndAt                   DateTime?         @map("actual_end_at")
+  waveId                        String?           @map("wave_id")
+  rescheduledFromAvailabilityId String?           @map("rescheduled_from_availability_id")
+  rescheduleCount               Int               @default(0) @map("reschedule_count")
+  disruptedAt                   DateTime?         @map("disrupted_at")
+  disruptionReason              String?           @map("disruption_reason") @db.Text
+  delayNotifiedAt               DateTime?         @map("delay_notified_at")
+  createdAt                     DateTime          @default(now()) @map("created_at")
+  updatedAt                     DateTime          @updatedAt @map("updated_at")
+  cancelledAt                   DateTime?         @map("cancelled_at")
 
-  patient      Patient      @relation(fields: [patientId], references: [id], onDelete: Restrict)
-  availability Availability @relation(fields: [availabilityId], references: [id], onDelete: Restrict)
+  patient                     Patient       @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  availability                Availability  @relation(fields: [availabilityId], references: [id], onDelete: Restrict)
+  rescheduledFromAvailability Availability? @relation("RescheduledFromAvailability", fields: [rescheduledFromAvailabilityId], references: [id], onDelete: SetNull)
+  wave                        Wave?         @relation(fields: [waveId], references: [id], onDelete: SetNull)
 
   @@index([patientId])
   @@index([availabilityId])
+  @@index([waveId])
+  @@index([status])
+  @@index([rescheduledFromAvailabilityId])
   @@map("appointments")
+}
+
+model Wave {
+  id             String      @id @default(cuid())
+  specialization String
+  windowStart    DateTime    @map("window_start")
+  windowEnd      DateTime    @map("window_end")
+  capacity       Int
+  stream         VisitStream?
+  status         WaveStatus  @default(DRAFT)
+  notes          String?     @db.Text
+  createdById    String      @map("created_by_id")
+  publishedAt    DateTime?   @map("published_at")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  createdBy    User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  appointments Appointment[]
+
+  @@index([specialization, windowStart])
+  @@map("waves")
+}
+
+model DoctorTimeOff {
+  id        String   @id @default(cuid())
+  doctorId  String   @map("doctor_id")
+  startAt   DateTime @map("start_at")
+  endAt     DateTime @map("end_at")
+  reason    String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  doctor                Doctor         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  blockedAvailabilities Availability[]
+
+  @@index([doctorId, startAt])
+  @@map("doctor_time_off")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String           @map("user_id")
+  type      NotificationType
+  title     String
+  body      String           @db.Text
+  href      String?
+  readAt    DateTime?        @map("read_at")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+model WaitlistEntry {
+  id           String    @id @default(cuid())
+  patientId    String    @map("patient_id")
+  doctorId     String    @map("doctor_id")
+  earliestDate DateTime  @map("earliest_date")
+  latestDate   DateTime  @map("latest_date")
+  notifiedAt   DateTime? @map("notified_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor  Doctor  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@unique([patientId, doctorId])
+  @@index([doctorId, earliestDate, latestDate])
+  @@map("waitlist_entries")
 }

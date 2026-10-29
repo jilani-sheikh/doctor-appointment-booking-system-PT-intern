@@ -2,25 +2,31 @@
 
 import { requireRole } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { bulkSlotSchema, type BulkSlotInput } from "@/lib/validations/slots";
-import { Role, DoctorStatus, SlotStatus } from "@/generated/prisma/client";
+import { slotGenerationSchema, type SlotGenerationInput } from "@/lib/validations/slots";
 import { parseISTDateTime } from "@/lib/time";
+import { Role, DoctorStatus, SlotStatus } from "@/generated/prisma/client";
+import { releaseSlot } from "@/lib/slots";
 import { revalidatePath } from "next/cache";
 
 /**
- * Generates slots within the specified date range and time window for the authenticated approved doctor.
+ * Generates slots in bulk according to the doctor's specifications.
+ * Enforces:
+ * - Approved doctor check
+ * - Overlap check against existing slots
+ * - Time-off check against DoctorTimeOff (sets BLOCKED with blockedByTimeOffId if within time-off)
+ * - Atomic createMany insertion
  */
-export async function createBulkSlotsAction(input: BulkSlotInput) {
+export async function generateSlotsAction(input: SlotGenerationInput) {
   const user = await requireRole(Role.DOCTOR);
 
   if (!user.doctor || user.doctor.status !== DoctorStatus.APPROVED) {
     return {
       success: false,
-      error: "Only approved doctors can manage and generate appointment slots.",
+      error: "Only approved doctors can configure consultation availability.",
     };
   }
 
-  const parsed = bulkSlotSchema.safeParse(input);
+  const parsed = slotGenerationSchema.safeParse(input);
   if (!parsed.success) {
     return {
       success: false,
@@ -37,15 +43,18 @@ export async function createBulkSlotsAction(input: BulkSlotInput) {
   const endD = new Date(`${endDate}T00:00:00Z`);
   const dayMillis = 24 * 60 * 60 * 1000;
 
-  const candidateSlots: { doctorId: string; startTime: Date; endTime: Date; status: SlotStatus }[] = [];
+  const candidateSlots: {
+    doctorId: string;
+    startTime: Date;
+    endTime: Date;
+    status: SlotStatus;
+    blockedByTimeOffId?: string | null;
+  }[] = [];
 
   for (let current = startD.getTime(); current <= endD.getTime(); current += dayMillis) {
     const curDate = new Date(current);
     const dateStr = curDate.toISOString().slice(0, 10);
-    // In IST, what day of week is this dateStr?
-    // Parse midday IST to reliably extract UTC day of week for that calendar date
     const probe = parseISTDateTime(dateStr, "12:00");
-    // Probe's day of week in IST:
     const istOffset = 5.5 * 60 * 60 * 1000;
     const probeIST = new Date(probe.getTime() + istOffset);
     const dayOfWeek = probeIST.getUTCDay();
@@ -54,7 +63,6 @@ export async function createBulkSlotsAction(input: BulkSlotInput) {
       continue;
     }
 
-    // Parse start and end time components
     const [startH, startM] = startTime.split(":").map(Number);
     const [endH, endM] = endTime.split(":").map(Number);
 
@@ -73,7 +81,6 @@ export async function createBulkSlotsAction(input: BulkSlotInput) {
       const slotStartUtc = parseISTDateTime(dateStr, slotStartTimeStr);
       const slotEndUtc = parseISTDateTime(dateStr, slotEndTimeStr);
 
-      // Do not generate slots in the past
       if (slotStartUtc > now) {
         candidateSlots.push({
           doctorId,
@@ -96,22 +103,28 @@ export async function createBulkSlotsAction(input: BulkSlotInput) {
     };
   }
 
-  // Find min and max timestamp to query existing slots for overlap
   const minTime = candidateSlots[0].startTime;
   const maxTime = candidateSlots[candidateSlots.length - 1].endTime;
 
-  const existingSlots = await db.availability.findMany({
-    where: {
-      doctorId,
-      startTime: { gte: minTime, lte: maxTime },
-    },
-    select: {
-      startTime: true,
-      endTime: true,
-    },
-  });
+  // Query existing slots and active doctor time-offs
+  const [existingSlots, activeTimeOffs] = await Promise.all([
+    db.availability.findMany({
+      where: {
+        doctorId,
+        startTime: { gte: minTime, lte: maxTime },
+      },
+      select: { startTime: true, endTime: true },
+    }),
+    db.doctorTimeOff.findMany({
+      where: {
+        doctorId,
+        startAt: { lt: maxTime },
+        endAt: { gt: minTime },
+      },
+      select: { id: true, startAt: true, endAt: true },
+    }),
+  ]);
 
-  // Filter out slots that overlap with any existing slot
   const nonOverlappingSlots: typeof candidateSlots = [];
   let skippedCount = 0;
 
@@ -125,6 +138,23 @@ export async function createBulkSlotsAction(input: BulkSlotInput) {
 
     if (hasOverlap) {
       skippedCount++;
+      continue;
+    }
+
+    // Check if slot falls inside an active DoctorTimeOff
+    const matchingTimeOff = activeTimeOffs.find(
+      (to) =>
+        candidate.startTime.getTime() < to.endAt.getTime() &&
+        candidate.endTime.getTime() > to.startAt.getTime()
+    );
+
+    if (matchingTimeOff) {
+      // Slot generated inside an active doctor absence is created as BLOCKED
+      nonOverlappingSlots.push({
+        ...candidate,
+        status: SlotStatus.BLOCKED,
+        blockedByTimeOffId: matchingTimeOff.id,
+      });
     } else {
       nonOverlappingSlots.push(candidate);
     }
@@ -151,6 +181,7 @@ export async function createBulkSlotsAction(input: BulkSlotInput) {
 
 /**
  * Toggles a slot's availability between AVAILABLE and BLOCKED.
+ * Uses shared releaseSlot helper when unblocking so active time-offs are respected.
  */
 export async function toggleBlockSlotAction(slotId: string) {
   const user = await requireRole(Role.DOCTOR);
@@ -171,22 +202,23 @@ export async function toggleBlockSlotAction(slotId: string) {
     return { success: false, error: "Booked slots cannot be modified." };
   }
 
-  const newStatus = slot.status === SlotStatus.AVAILABLE ? SlotStatus.BLOCKED : SlotStatus.AVAILABLE;
-
-  await db.availability.update({
-    where: { id: slotId },
-    data: { status: newStatus },
-  });
-
-  revalidatePath("/doctor/slots");
-  revalidatePath("/doctor/dashboard");
-  revalidatePath("/doctors");
-
-  return {
-    success: true,
-    newStatus,
-    message: `Slot is now ${newStatus.toLowerCase()}.`,
-  };
+  if (slot.status === SlotStatus.AVAILABLE) {
+    await db.availability.update({
+      where: { id: slotId },
+      data: { status: SlotStatus.BLOCKED, blockedByTimeOffId: null },
+    });
+    revalidatePath("/doctor/slots");
+    return { success: true, newStatus: SlotStatus.BLOCKED, message: "Slot is now blocked." };
+  } else {
+    // Unblocking: use shared releaseSlot helper to check time off
+    const res = await releaseSlot(db, slotId);
+    revalidatePath("/doctor/slots");
+    return {
+      success: true,
+      newStatus: res.newStatus,
+      message: res.newStatus === SlotStatus.AVAILABLE ? "Slot is now available." : "Slot remains blocked due to active time off.",
+    };
+  }
 }
 
 /**
@@ -224,3 +256,5 @@ export async function deleteSlotAction(slotId: string) {
     message: "Slot successfully deleted.",
   };
 }
+
+export const createBulkSlotsAction = generateSlotsAction;

@@ -1,7 +1,7 @@
 import { Metadata } from "next";
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
-import { Role, DoctorStatus, AppointmentStatus } from "@/generated/prisma/client";
+import { Role, DoctorStatus, AppointmentStatus, WaveStatus } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,35 +15,40 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  Shield,
-  Stethoscope,
   Users,
+  Stethoscope,
   Calendar,
+  ShieldCheck,
+  Waves,
+  ArrowRight,
 } from "lucide-react";
 import { formatDateTimeIST } from "@/lib/time";
+import { calculateWaveMetrics, type WaveTarget } from "@/lib/waves";
 
 export const metadata: Metadata = {
   title: "Admin Dashboard — Medrella",
-  description: "Platform administration and verification control center.",
+  description: "Administrative oversight, practitioner verifications, system metrics, and arrival wave monitoring.",
 };
 
 export default async function AdminDashboardPage() {
-  const user = await requireRole(Role.ADMIN);
+  await requireRole(Role.ADMIN);
 
-  // Aggregate counts
   const [
     totalUsers,
-    patientUsers,
-    doctorUsers,
-    adminUsers,
+    patientCount,
+    doctorCount,
+    adminCount,
     pendingDoctors,
     approvedDoctors,
     rejectedDoctors,
     pendingAppointments,
     confirmedAppointments,
+    checkedInAppointments,
+    inConsultationAppointments,
     completedAppointments,
     cancelledAppointments,
     noShowAppointments,
+    publishedWaves,
     recentUsers,
     recentAppointments,
   ] = await Promise.all([
@@ -56,9 +61,17 @@ export default async function AdminDashboardPage() {
     db.doctor.count({ where: { status: DoctorStatus.REJECTED } }),
     db.appointment.count({ where: { status: AppointmentStatus.PENDING } }),
     db.appointment.count({ where: { status: AppointmentStatus.CONFIRMED } }),
+    db.appointment.count({ where: { status: AppointmentStatus.CHECKED_IN } }),
+    db.appointment.count({ where: { status: AppointmentStatus.IN_CONSULTATION } }),
     db.appointment.count({ where: { status: AppointmentStatus.COMPLETED } }),
     db.appointment.count({ where: { status: AppointmentStatus.CANCELLED } }),
     db.appointment.count({ where: { status: AppointmentStatus.NO_SHOW } }),
+    db.wave.findMany({
+      where: { status: WaveStatus.PUBLISHED },
+      include: {
+        appointments: { select: { status: true, checkedInAt: true } },
+      },
+    }),
     db.user.findMany({
       take: 20,
       orderBy: { createdAt: "desc" },
@@ -92,14 +105,39 @@ export default async function AdminDashboardPage() {
     }),
   ]);
 
+  // Calculate aggregate wave performance metrics (Amendment 5a)
+  let totalWaveExpected = 0;
+  let totalWaveOnTime = 0;
+  let totalWaveLate = 0;
+  let totalWaveNoShow = 0;
+  let totalWaveNotYetArrived = 0;
+
+  for (const wave of publishedWaves) {
+    const target: WaveTarget = {
+      id: wave.id,
+      specialization: wave.specialization,
+      windowStart: wave.windowStart,
+      windowEnd: wave.windowEnd,
+      capacity: wave.capacity,
+      stream: wave.stream,
+      status: wave.status,
+    };
+    const m = calculateWaveMetrics(target, wave.appointments);
+    totalWaveExpected += m.expectedArrivals;
+    totalWaveOnTime += m.onTimeCheckIns;
+    totalWaveLate += m.lateCheckIns;
+    totalWaveNoShow += m.noShows;
+    totalWaveNotYetArrived += m.notYetArrived;
+  }
+
   const getRoleBadge = (role: Role | null) => {
     switch (role) {
       case "PATIENT":
-        return <Badge variant="secondary" className="text-[10px] uppercase">Patient</Badge>;
+        return <Badge variant="secondary" className="text-[10px] uppercase font-semibold">Patient</Badge>;
       case "DOCTOR":
-        return <Badge variant="default" className="text-[10px] uppercase bg-blue-600">Doctor</Badge>;
+        return <Badge variant="default" className="text-[10px] uppercase bg-blue-600 font-semibold">Doctor</Badge>;
       case "ADMIN":
-        return <Badge variant="default" className="text-[10px] uppercase bg-purple-600">Admin</Badge>;
+        return <Badge variant="default" className="text-[10px] uppercase bg-purple-600 font-semibold">Admin</Badge>;
       default:
         return <Badge variant="outline" className="text-[10px] uppercase">Unassigned</Badge>;
     }
@@ -108,15 +146,19 @@ export default async function AdminDashboardPage() {
   const getStatusBadge = (status: AppointmentStatus) => {
     switch (status) {
       case "PENDING":
-        return <Badge variant="warning" className="text-[10px] uppercase">Pending</Badge>;
+        return <Badge variant="warning" className="text-[10px] uppercase font-semibold">Pending</Badge>;
       case "CONFIRMED":
-        return <Badge variant="success" className="text-[10px] uppercase">Confirmed</Badge>;
+        return <Badge variant="success" className="text-[10px] uppercase font-semibold">Confirmed</Badge>;
+      case "CHECKED_IN":
+        return <Badge variant="warning" className="text-[10px] uppercase bg-amber-600 text-white font-semibold">Checked In</Badge>;
+      case "IN_CONSULTATION":
+        return <Badge variant="default" className="text-[10px] uppercase bg-blue-600 animate-pulse font-semibold">In Consultation</Badge>;
       case "COMPLETED":
-        return <Badge variant="default" className="text-[10px] uppercase bg-emerald-600">Completed</Badge>;
+        return <Badge variant="default" className="text-[10px] uppercase bg-emerald-600 font-semibold">Completed</Badge>;
       case "CANCELLED":
-        return <Badge variant="destructive" className="text-[10px] uppercase">Cancelled</Badge>;
+        return <Badge variant="destructive" className="text-[10px] uppercase font-semibold">Cancelled</Badge>;
       case "NO_SHOW":
-        return <Badge variant="destructive" className="text-[10px] uppercase bg-rose-700">No Show</Badge>;
+        return <Badge variant="destructive" className="text-[10px] uppercase bg-rose-700 font-semibold">No Show</Badge>;
       default:
         return <Badge variant="outline" className="text-[10px] uppercase">{status}</Badge>;
     }
@@ -128,55 +170,121 @@ export default async function AdminDashboardPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
         <div>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary uppercase tracking-wider flex items-center gap-1">
-              <Shield className="h-3.5 w-3.5" /> Administrative Console
+            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300 uppercase tracking-wider">
+              System Administration
             </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground mt-1">
-            System Overview — {user.name ?? "Administrator"}
+            Admin Overview & Analytics
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Platform health, user distribution, and appointment lifecycle metrics.
+            Monitor platform activity, practitioner verifications, wave arrivals, and system state.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
           <Link
-            href="/admin/doctors"
-            className={buttonVariants({ className: "gap-1.5 shadow-xs" })}
+            href="/admin/waves"
+            className={buttonVariants({ variant: "outline", size: "sm" })}
           >
-            <Stethoscope className="h-4 w-4" />
-            Doctor Verifications ({pendingDoctors})
+            <Waves className="h-4 w-4 mr-1.5" />
+            Arrival Waves
+          </Link>
+          <Link
+            href="/admin/doctors"
+            className={buttonVariants({ variant: "default", size: "sm" })}
+          >
+            <ShieldCheck className="h-4 w-4 mr-1.5" />
+            Doctor Verifications
+            {pendingDoctors > 0 && (
+              <span className="ml-2 rounded-full bg-amber-500 px-1.5 py-0.2 text-[10px] font-bold text-white">
+                {pendingDoctors}
+              </span>
+            )}
           </Link>
         </div>
       </div>
 
-      {/* Aggregate Stats */}
+      {/* Wave Performance Summary Strip (Amendment 5a) */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-bold text-foreground flex items-center gap-2">
+            <Waves className="h-4 w-4 text-primary" />
+            Published Arrival Waves — Expected vs. Actual Arrivals
+          </h2>
+          <Link
+            href="/admin/waves"
+            className="text-xs font-semibold text-primary hover:underline flex items-center gap-1"
+          >
+            Manage Waves ({publishedWaves.length} published) <ArrowRight className="h-3 w-3" />
+          </Link>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <Card className="border-border shadow-xs">
+            <CardContent className="p-4">
+              <span className="text-xs text-muted-foreground">Expected Arrivals</span>
+              <div className="text-2xl font-bold text-foreground mt-1">{totalWaveExpected}</div>
+              <span className="text-[10px] text-muted-foreground">Assigned to waves</span>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-xs">
+            <CardContent className="p-4">
+              <span className="text-xs text-muted-foreground">On-Time Arrivals</span>
+              <div className="text-2xl font-bold text-emerald-600 mt-1">{totalWaveOnTime}</div>
+              <span className="text-[10px] text-muted-foreground">Within wave window</span>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-xs">
+            <CardContent className="p-4">
+              <span className="text-xs text-muted-foreground">Late Check-Ins</span>
+              <div className="text-2xl font-bold text-rose-600 mt-1">{totalWaveLate}</div>
+              <span className="text-[10px] text-muted-foreground">Past window end</span>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-xs">
+            <CardContent className="p-4">
+              <span className="text-xs text-muted-foreground">No-Shows</span>
+              <div className="text-2xl font-bold text-amber-600 mt-1">{totalWaveNoShow}</div>
+              <span className="text-[10px] text-muted-foreground">Recorded absent</span>
+            </CardContent>
+          </Card>
+          <Card className="col-span-2 sm:col-span-1 border-border shadow-xs">
+            <CardContent className="p-4">
+              <span className="text-xs text-muted-foreground">Not Yet Arrived</span>
+              <div className="text-2xl font-bold text-blue-600 mt-1">{totalWaveNotYetArrived}</div>
+              <span className="text-[10px] text-muted-foreground">Awaiting check-in</span>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* Metric Breakdown Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* User Distribution */}
         <Card className="border-border shadow-xs">
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
               <Users className="h-4 w-4 text-primary" />
-              Users by Role ({totalUsers})
+              User Directory Breakdown
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
             <div className="flex justify-between py-1 border-b border-border/50">
+              <span className="text-muted-foreground">Total Users:</span>
+              <span className="font-bold text-foreground">{totalUsers}</span>
+            </div>
+            <div className="flex justify-between py-1 border-b border-border/50">
               <span className="text-muted-foreground">Patients:</span>
-              <span className="font-semibold text-foreground">{patientUsers}</span>
+              <span className="font-semibold text-foreground">{patientCount}</span>
             </div>
             <div className="flex justify-between py-1 border-b border-border/50">
               <span className="text-muted-foreground">Doctors:</span>
-              <span className="font-semibold text-foreground">{doctorUsers}</span>
+              <span className="font-semibold text-foreground">{doctorCount}</span>
             </div>
-            <div className="flex justify-between py-1 border-b border-border/50">
+            <div className="flex justify-between py-1">
               <span className="text-muted-foreground">Administrators:</span>
-              <span className="font-semibold text-foreground">{adminUsers}</span>
-            </div>
-            <div className="flex justify-between py-1 text-muted-foreground">
-              <span>Unassigned/New:</span>
-              <span className="font-medium">{totalUsers - (patientUsers + doctorUsers + adminUsers)}</span>
+              <span className="font-semibold text-foreground">{adminCount}</span>
             </div>
           </CardContent>
         </Card>
@@ -184,27 +292,22 @@ export default async function AdminDashboardPage() {
         {/* Doctor Verification Status */}
         <Card className="border-border shadow-xs">
           <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Stethoscope className="h-4 w-4 text-primary" />
-                Doctors by Status
-              </CardTitle>
-              <Link href="/admin/doctors" className="text-xs text-primary font-medium hover:underline">
-                Manage →
-              </Link>
-            </div>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Stethoscope className="h-4 w-4 text-primary" />
+              Doctor Verification Pipeline
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
-            <div className="flex justify-between py-1 border-b border-border/50">
-              <span className="text-amber-600 dark:text-amber-400 font-medium">Pending Review:</span>
-              <span className="font-bold text-amber-600 dark:text-amber-400">{pendingDoctors}</span>
+            <div className="flex justify-between py-1 border-b border-border/50 text-amber-600 dark:text-amber-400">
+              <span className="font-medium">Pending Approvals:</span>
+              <span className="font-bold">{pendingDoctors}</span>
             </div>
-            <div className="flex justify-between py-1 border-b border-border/50">
-              <span className="text-emerald-600 dark:text-emerald-400 font-medium">Approved:</span>
-              <span className="font-bold text-emerald-600 dark:text-emerald-400">{approvedDoctors}</span>
+            <div className="flex justify-between py-1 border-b border-border/50 text-emerald-600 dark:text-emerald-400">
+              <span className="font-medium">Approved Practitioners:</span>
+              <span className="font-bold">{approvedDoctors}</span>
             </div>
             <div className="flex justify-between py-1 text-destructive">
-              <span className="font-medium">Rejected:</span>
+              <span className="font-medium">Rejected Submissions:</span>
               <span className="font-bold">{rejectedDoctors}</span>
             </div>
           </CardContent>
@@ -228,6 +331,14 @@ export default async function AdminDashboardPage() {
               <span className="font-medium text-emerald-600">{confirmedAppointments}</span>
             </div>
             <div className="flex justify-between py-0.5">
+              <span className="text-muted-foreground">Checked In:</span>
+              <span className="font-medium text-amber-700">{checkedInAppointments}</span>
+            </div>
+            <div className="flex justify-between py-0.5">
+              <span className="text-muted-foreground">In Consultation:</span>
+              <span className="font-medium text-blue-600">{inConsultationAppointments}</span>
+            </div>
+            <div className="flex justify-between py-0.5">
               <span className="text-muted-foreground">Completed:</span>
               <span className="font-medium text-foreground">{completedAppointments}</span>
             </div>
@@ -243,7 +354,7 @@ export default async function AdminDashboardPage() {
         </Card>
       </div>
 
-      {/* Read-Only Recent Tables */}
+      {/* Recent Tables */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Recent Users Table */}
         <div className="space-y-3">

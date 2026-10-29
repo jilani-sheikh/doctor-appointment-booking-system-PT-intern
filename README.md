@@ -241,7 +241,212 @@ npm run build
   - [x] Auth.js v5 with Google provider & `@auth/prisma-adapter`.
   - [x] Lazy Zod environment validation (zero-credential build support).
   - [x] Responsive healthcare landing page with "Coming soon" placeholders.
-- [ ] **Phase 2: User Profiles & Roles** (Patients, Doctors, Admin).
-- [ ] **Phase 3: Doctor Availability Module** (Slots & calendar scheduling).
-- [ ] **Phase 4: Appointment Booking & Lifecycle Management**.
-- [ ] **Phase 5: Notifications & Payments**.
+- [x] **Phase 2: User Profiles & Roles** (Patients, Doctors, Admin).
+- [x] **Phase 3: Doctor Availability Module** (Slots & calendar scheduling, bulk generator).
+- [x] **Phase 4: Appointment Booking & Lifecycle Management** (Double-booking prevention, partial unique index).
+- [x] **Phase 5: Live Queue, Waves, Streams, Dynamic Scheduling & Notifications**
+  - [x] Live Doctor Queue & Patient Turn Estimates.
+  - [x] Wave-based Arrival Management & Overflow Balancing.
+  - [x] Clinical Visit Streams (`NEW_CONSULTATION`, `FOLLOW_UP`, `PRIORITY`).
+  - [x] Dynamic Scheduling: Self-Service Rescheduling (max 2) & Automated Waitlist.
+  - [x] Doctor Absence Management with Precision Slot Restoration (`blockedByTimeOffId`).
+  - [x] In-App Notification Center with Bell Indicator and Debounced Triggers.
+  - [x] Race-Safe Consultation Starting via PostgreSQL Doctor Row Locking.
+
+---
+
+## 🚦 Appointment Status Model & Transition Matrix
+
+The consultation workflow is governed by strict, clinically validated state transitions (`src/lib/appointment-status.ts`):
+
+```
+       ┌───────────┐
+       │  PENDING  ├──────────────┐ (Patient/Doctor/Admin Cancel)
+       └─────┬─────┘              │
+             │ (Doctor Confirm)   ▼
+       ┌─────▼─────┐       ┌─────────────┐
+       │ CONFIRMED ├──────►│  CANCELLED  │ [Terminal]
+       └──┬──────┬─┘       └─────────────┘
+          │      │ (Doctor/Admin No-Show after 15m)
+          │      ▼
+          │  ┌─────────┐
+          │  │ NO_SHOW │ [Terminal]
+          │  └─────────┘
+          │ (Patient self-check-in: start - 30m to end; or Doctor override)
+       ┌──▼────────┐
+       │CHECKED_IN ├──────────────┐ (Doctor/Admin Cancel/No-Show)
+       └──┬────────┘              │
+          │ (Doctor Start: race-safe lock)
+       ┌──▼──────────────┐        │
+       │ IN_CONSULTATION ├────────┘
+       └──┬──────────────┘
+          │ (Doctor Complete)
+       ┌──▼────────┐
+       │ COMPLETED │ [Terminal]
+       └───────────┘
+```
+
+### Transition Permission Matrix
+
+| Current Status | Target Status | Permitted Roles | Conditions & Constraints |
+|---|---|---|---|
+| `PENDING` | `CONFIRMED` | Doctor, Admin | Practitioner accepts booking request. |
+| `PENDING` | `CANCELLED` | Patient, Doctor, Admin | Patient can cancel anytime while PENDING. Slot is released. |
+| `CONFIRMED` | `CHECKED_IN` | Patient, Doctor, Admin | Patient self-check-in allowed within `[start - 30 min, end]`. Staff can check in on arrival. |
+| `CONFIRMED` | `CANCELLED` | Patient, Doctor, Admin | Patient requires ≥ 2h notice unless consultation was disrupted by doctor absence. |
+| `CONFIRMED` | `NO_SHOW` | Doctor, Admin | Allowed only after `start + 15 min` grace period. |
+| `CHECKED_IN` | `IN_CONSULTATION` | Doctor | Doctor row locked `FOR UPDATE`. Doctor must have 0 current `IN_CONSULTATION` appointments. |
+| `CHECKED_IN` | `CANCELLED` | Doctor, Admin | Emergency cancellation by clinic staff. Slot released. |
+| `CHECKED_IN` | `NO_SHOW` | Doctor, Admin | If patient leaves clinic before consultation. |
+| `IN_CONSULTATION` | `COMPLETED` | Doctor | Consultation finishes successfully. |
+| `COMPLETED` | *(None)* | — | Terminal state. Slot is historical. |
+| `CANCELLED` | *(None)* | — | Terminal state. Slot released to waitlist or available. |
+| `NO_SHOW` | *(None)* | — | Terminal state. Cannot be reopened. |
+
+---
+
+## ⏱️ Live Queue Estimation & Delay Propagation
+
+The queue estimation engine (`src/lib/queue.ts`) calculates approximate start and completion times in real-time without constant slot assumptions:
+
+1. **Dynamic Slot Durations:** Slot duration is derived directly from each availability's own `(endTime - startTime)`. Different appointments can have different lengths (e.g. 15m, 30m, 45m).
+2. **Current Consultation Overrun:** If an appointment is `IN_CONSULTATION`:
+   $$\text{expectedEnd} = \max(\text{now}, \text{actualStartAt} + \text{slotDuration})$$
+   $$\text{overrunMinutes} = \max(0, \text{now} - (\text{actualStartAt} + \text{slotDuration}))$$
+3. **Subsequent Appointments:**
+   $$\text{expectedStart} = \max(\text{scheduledStart}, \text{previousExpectedEnd})$$
+   $$\text{expectedEnd} = \text{expectedStart} + \text{slotDuration}$$
+   $$\text{delayMinutes} = \max(0, \text{expectedStart} - \text{scheduledStart})$$
+4. **Historical Guard Rule:** If the previous slot has passed and nothing is currently in progress, previous `expectedEnd` defaults to its scheduled end time (not `now`), preventing false delay inflation before the doctor logs in.
+5. **Display Approximation:** Delays are rounded to the nearest 5 minutes (`roundToNearest5Minutes`) and prominently labelled "Approximate" with an emergency disclaimer banner.
+
+---
+
+## 🌊 Wave-Based Arrival Management
+
+Medrella prevents clinic lobby overcrowding through arrival wave scheduling (`src/lib/waves.ts`):
+
+- **Deterministic Auto-Generation:** Administrators can divide any operational day into sequential windows of length `windowMinutes` (e.g. 60 min) with default capacity (e.g. 4 patients) for any medical department.
+- **Capacity & Overflow Protection:** Candidates are grouped into matching waves by department, time window, and optional stream filter. Appointments exceeding capacity are tracked in `overflowByWaveId` and `unassigned`.
+- **Publishing Gate:** A wave cannot be published if unassigned overflow exists, unless the administrator explicitly marks the "Acknowledge Overflow" confirmation checkbox.
+- **Patient Arrival Notifications:** Upon publishing, assigned patients receive an in-app notification with their localized IST arrival window (e.g. `Arrive between 10:00 AM and 11:00 AM (IST)`).
+- **Post-Publishing Additions:** Late appointments confirmed after a wave is published are added only if capacity remains; otherwise, they are designated as unassigned for manual staff review.
+
+---
+
+## 🛡️ Doctor Absence & Slot Restoration Rule (`blockedByTimeOffId`)
+
+When a doctor logs time off via `/doctor/time-off`:
+1. All slots within `[startAt, endAt)` are marked `BLOCKED`.
+2. Each blocked slot records `blockedByTimeOffId = doctorTimeOff.id`.
+3. Confirmed appointments in that window are flagged `disruptedAt = now` with the reason, and affected patients receive immediate `DOCTOR_ABSENCE` notifications with free cancellation/rescheduling.
+4. **Slot Restoration Rule:** When an absence is deleted, the system restores to `AVAILABLE` **ONLY** slots where `blockedByTimeOffId = doctorTimeOff.id` that have no active appointment.
+5. **Manual Block Preservation:** Any slots manually blocked by the doctor (`blockedByTimeOffId == null`) are **never touched or automatically unblocked**.
+
+---
+
+## 🔄 Dynamic Rescheduling & Automated Waitlist
+
+- **Patient Self-Service Reschedule (`/book/reschedule/[appointmentId]`):** Patients can reschedule up to **2 times**, at least **2 hours before start** (waived if disrupted by doctor absence).
+- **Atomic Slot Swap:** Inside a single database transaction, the target slot is claimed (`BOOKED`), the previous slot is freed (`releaseSlot`), and the appointment is moved to `PENDING` with `rescheduleCount` incremented.
+- **Automated Waitlist:** When all slots for a doctor are booked, patients can join the waitlist with a target date range.
+- **Automated Release Trigger:** Whenever an active appointment is cancelled or rescheduled, `releaseSlot` checks `waitlist_entries` and dispatches `SLOT_AVAILABLE` notifications to waiting patients.
+
+---
+
+## 🔔 In-App Notification Engine
+
+The system supports real-time notifications with unread counts and a dedicated notification center (`/notifications`):
+
+| Notification Type | Trigger Point | Description |
+|---|---|---|
+| `APPOINTMENT_CONFIRMED` | Doctor confirms booking | Patient informed consultation is approved. |
+| `APPOINTMENT_CANCELLED` | Patient / Doctor cancels | Counterpart informed consultation is cancelled. |
+| `APPOINTMENT_RESCHEDULED` | Patient / Doctor reschedules | Counterpart informed of updated slot time. |
+| `DOCTOR_ABSENCE` | Doctor schedules time off | Patients notified of disruption with free reschedule link. |
+| `SLOT_AVAILABLE` | `releaseSlot` finds waitlist match | Waitlisted patients alerted that a slot opened up. |
+| `WAVE_PUBLISHED` | Admin publishes arrival wave | Patient notified of their specific arrival window. |
+| `QUEUE_DELAY` | `startConsultation` / `endConsultation` | Triggered only if estimated delay exceeds 20 minutes (debounced via `delayNotifiedAt`, once per day). |
+
+---
+
+## 🏷️ Clinical Visit Streams
+
+Consultations are categorized into three distinct clinical streams:
+- `NEW_CONSULTATION`: First-time clinical evaluation (Patient selectable).
+- `FOLLOW_UP`: Ongoing treatment or lab review (Patient selectable).
+- `PRIORITY`: Clinically expedited review (Strictly restricted to Doctor and Admin; enforced on the server via `canAssignStream`).
+
+---
+
+## ⚠️ Known Limitations
+
+1. **In-App Notifications Only:** Notifications are persisted to PostgreSQL and displayed via the navbar bell and `/notifications`. SMS and external email dispatch are omitted in Phase 5.
+2. **Polling-Based Client Updates:** Live queue and appointment estimates auto-refresh on a 30-second polling interval (`useRouter().refresh()`), rather than WebSockets or Server-Sent Events.
+3. **No Emergency Triage:** Medrella is designed strictly for elective and non-emergency outpatient consultations. All queue views display an emergency disclaimer directing acute emergencies to local hospital emergency lines.
+
+---
+
+## 🧪 Verification & Concurrency Test Scripts
+
+Medrella includes both unit test suites and live database concurrency test scripts:
+
+```bash
+# 1. Run unit test suites (node:test via tsx)
+npm run test
+
+# 2. Run TypeScript strict typecheck
+npm run typecheck
+
+# 3. Run ESLint checks
+npm run lint
+
+# 4. Verify Zero-Credential Production Build
+npm run build
+
+# 5. Run Live Database Booking Concurrency Test
+npx tsx scripts/test-booking.ts
+
+# 6. Run Live Database Queue & Reschedule Race Condition Test
+npx tsx scripts/test-queue-concurrency.ts
+```
+
+---
+
+## 🚀 Production Deployment & Neon Migration Guide
+
+To apply database migrations to Neon and deploy to Vercel:
+
+### 1. Apply Migration to Neon Database
+Ensure `DATABASE_URL` (pooled) and `DIRECT_URL` (non-pooled) are configured in your active environment, then run:
+
+```bash
+npm run db:deploy
+```
+
+This applies migration `20261029000000_live_queue_waves_scheduling` which:
+- Adds enum types `VisitStream`, `WaveStatus`, and `NotificationType`.
+- Extends enum `AppointmentStatus` with `CHECKED_IN` and `IN_CONSULTATION`.
+- Adds tables `waves`, `doctor_time_off`, `notifications`, and `waitlist_entries`.
+- Preserves the partial unique index `appointments_availability_id_active_unique`.
+- Enforces check constraints `waves_check_end_after_start` and `doctor_time_off_check_end_after_start`.
+
+### 2. Verify Database State
+Run the concurrency verification script to confirm database connectivity, schema integrity, and the partial unique index:
+
+```bash
+npx tsx scripts/test-booking.ts
+npx tsx scripts/test-queue-concurrency.ts
+```
+
+### 3. Deploy to Vercel
+Deploy your branch or push to production:
+```bash
+vercel --prod
+```
+Verify that the following environment variables are set in your Vercel Project Settings:
+- `DATABASE_URL`
+- `DIRECT_URL`
+- `AUTH_SECRET`
+- `AUTH_GOOGLE_ID`
+- `AUTH_GOOGLE_SECRET`

@@ -50,3 +50,7 @@ export const bulkSlotSchema = z
   });
 
 export type BulkSlotInput = z.infer<typeof bulkSlotSchema>;
+
+// Aliases for compatibility
+export const slotGenerationSchema = bulkSlotSchema;
+export type SlotGenerationInput = BulkSlotInput;

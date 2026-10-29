@@ -3,7 +3,19 @@
 import { requireRole } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { bookAppointmentSchema, type BookAppointmentInput } from "@/lib/validations/booking";
-import { Role, DoctorStatus, SlotStatus, AppointmentStatus, Prisma } from "@/generated/prisma/client";
+import {
+  Role,
+  DoctorStatus,
+  SlotStatus,
+  AppointmentStatus,
+  NotificationType,
+  VisitStream,
+  Prisma,
+} from "@/generated/prisma/client";
+import { canPatientCancel } from "@/lib/appointment-status";
+import { releaseSlot, notifyWaitlistAfterSlotRelease } from "@/lib/slots";
+import { createNotification } from "@/lib/notifications";
+import { formatDateTimeIST } from "@/lib/time";
 import { revalidatePath } from "next/cache";
 
 /**
@@ -33,7 +45,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
     };
   }
 
-  const { availabilityId, reason } = parsed.data;
+  const { availabilityId, reason, stream } = parsed.data;
   const patientId = user.patient.id;
   const now = new Date();
   const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
@@ -46,6 +58,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
         select: {
           id: true,
           status: true,
+          user: { select: { id: true, name: true } },
         },
       },
     },
@@ -85,12 +98,13 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
           throw new Error("SLOT_UNAVAILABLE");
         }
 
-        // 2. Create Appointment record
+        // 2. Create Appointment record with requested visit stream
         const appt = await tx.appointment.create({
           data: {
             patientId,
             availabilityId,
             reason,
+            stream: stream as VisitStream,
             status: AppointmentStatus.PENDING,
           },
         });
@@ -99,6 +113,16 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
       },
       { maxWait: 10000, timeout: 20000 }
     );
+
+    // Notify doctor of new pending booking
+    const slotTimeFormatted = formatDateTimeIST(slot.startTime);
+    await createNotification({
+      userId: slot.doctor.user.id,
+      type: NotificationType.GENERAL,
+      title: "New Appointment Request",
+      body: `${user.name ?? "A patient"} has booked a consultation for ${slotTimeFormatted}. Awaiting your confirmation.`,
+      href: "/doctor/appointments",
+    });
 
     revalidatePath(`/doctors/${slot.doctorId}`);
     revalidatePath("/patient/appointments");
@@ -147,10 +171,16 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
 }
 
 /**
- * Cancels a patient's appointment if it is PENDING or CONFIRMED and at least 2 hours before start time.
- * In a single transaction:
- * - Updates appointment status to CANCELLED with cancelledAt timestamp
- * - Frees the slot back to AVAILABLE
+ * Cancels a patient's appointment.
+ *
+ * Rules (Promt5.md & Amendment 2 & 4):
+ * - Enforces canPatientCancel (PENDING or CONFIRMED, >= 2 hrs before start, or anytime if disrupted; never once CHECKED_IN).
+ * - In a single transaction:
+ *   (a) Updates appointment to CANCELLED with cancelledAt timestamp
+ *   (b) Releases availability slot back using releaseSlot shared helper (checks DoctorTimeOff)
+ * - Post-commit:
+ *   - Notifies waitlist patients if slot returns to AVAILABLE
+ *   - Creates APPOINTMENT_CANCELLED notifications for doctor and patient
  */
 export async function cancelPatientAppointmentAction(appointmentId: string) {
   const user = await requireRole(Role.PATIENT);
@@ -162,7 +192,13 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
   const appointment = await db.appointment.findUnique({
     where: { id: appointmentId },
     include: {
-      availability: true,
+      availability: {
+        include: {
+          doctor: {
+            include: { user: { select: { id: true, name: true } } },
+          },
+        },
+      },
     },
   });
 
@@ -170,28 +206,26 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
     return { success: false, error: "Appointment not found or unauthorized." };
   }
 
-  if (
-    appointment.status !== AppointmentStatus.PENDING &&
-    appointment.status !== AppointmentStatus.CONFIRMED
-  ) {
+  const cancelEval = canPatientCancel(
+    {
+      status: appointment.status,
+      startTime: appointment.availability.startTime,
+      disruptedAt: appointment.disruptedAt,
+    },
+    new Date()
+  );
+
+  if (!cancelEval.allowed) {
     return {
       success: false,
-      error: `Appointments in ${appointment.status.toLowerCase()} status cannot be cancelled.`,
+      error: cancelEval.reason ?? "Cancellation not allowed for this appointment.",
     };
   }
 
-  const now = new Date();
-  const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
-
-  if (appointment.availability.startTime <= twoHoursFromNow) {
-    return {
-      success: false,
-      error: "Appointments can only be cancelled at least 2 hours before the consultation time.",
-    };
-  }
+  const doctorId = appointment.availability.doctorId;
 
   try {
-    await db.$transaction(
+    const result = await db.$transaction(
       async (tx) => {
         // 1. Mark appointment cancelled
         await tx.appointment.update({
@@ -202,22 +236,45 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
           },
         });
 
-        // 2. Free availability slot back to AVAILABLE
-        await tx.availability.update({
-          where: { id: appointment.availabilityId },
-          data: {
-            status: SlotStatus.AVAILABLE,
-          },
-        });
+        // 2. Free availability slot using shared releaseSlot helper
+        const slotRelease = await releaseSlot(tx, appointment.availabilityId);
+
+        return { slotRelease };
       },
       { maxWait: 10000, timeout: 20000 }
     );
+
+    const slotTimeFormatted = formatDateTimeIST(appointment.availability.startTime);
+    const doctorName = appointment.availability.doctor.user.name ?? "Practitioner";
+
+    // Notify patient
+    await createNotification({
+      userId: user.id,
+      type: NotificationType.APPOINTMENT_CANCELLED,
+      title: "Appointment Cancelled",
+      body: `Your consultation with Dr. ${doctorName} on ${slotTimeFormatted} has been cancelled.`,
+      href: "/patient/appointments",
+    });
+
+    // Notify doctor
+    await createNotification({
+      userId: appointment.availability.doctor.user.id,
+      type: NotificationType.APPOINTMENT_CANCELLED,
+      title: "Patient Cancelled Appointment",
+      body: `${user.name ?? "A patient"} has cancelled their consultation scheduled for ${slotTimeFormatted}. The slot is now freed.`,
+      href: "/doctor/appointments",
+    });
+
+    // Notify waitlist if slot became AVAILABLE
+    if (result.slotRelease.newlyAvailable) {
+      await notifyWaitlistAfterSlotRelease(doctorId, result.slotRelease.startTime);
+    }
 
     revalidatePath("/patient/appointments");
     revalidatePath("/patient/dashboard");
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/dashboard");
-    revalidatePath(`/doctors/${appointment.availability.doctorId}`);
+    revalidatePath(`/doctors/${doctorId}`);
 
     return {
       success: true,

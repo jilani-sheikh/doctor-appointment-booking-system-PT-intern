@@ -5,6 +5,10 @@
  * Run with: npx tsx scripts/test-booking.ts
  */
 
+import dotenv from "dotenv";
+dotenv.config({ path: ".env.local" });
+dotenv.config();
+
 import { Role, DoctorStatus, SlotStatus, AppointmentStatus } from "../src/generated/prisma/client";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { PrismaNeon } from "@prisma/adapter-neon";
