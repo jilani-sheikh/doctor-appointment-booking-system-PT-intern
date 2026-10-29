@@ -5,7 +5,7 @@ import { Role, DoctorStatus, AppointmentStatus, SlotStatus } from "@/generated/p
 import { db } from "@/lib/db";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
-import { AlertCircle, CheckCircle2, Clock, Calendar, Stethoscope, Briefcase, Users, ArrowRight } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, Calendar, Stethoscope, Briefcase, Users, ArrowRight, Activity } from "lucide-react";
 import { getTodayISTDateString, getISTDateString } from "@/lib/time";
 
 export const metadata: Metadata = {
@@ -72,7 +72,10 @@ export default async function DoctorDashboardPage() {
 
       if (
         appt.availability.startTime >= now &&
-        (appt.status === AppointmentStatus.PENDING || appt.status === AppointmentStatus.CONFIRMED)
+        (appt.status === AppointmentStatus.PENDING ||
+          appt.status === AppointmentStatus.CONFIRMED ||
+          appt.status === AppointmentStatus.CHECKED_IN ||
+          appt.status === AppointmentStatus.IN_CONSULTATION)
       ) {
         upcomingTotalCount++;
       }
@@ -133,13 +136,26 @@ export default async function DoctorDashboardPage() {
         </div>
 
         {isApproved && (
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <Link
+              href="/doctor/queue"
+              className={buttonVariants({ variant: "default", size: "sm", className: "gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold" })}
+            >
+              <Activity className="h-4 w-4" />
+              Live Queue
+            </Link>
+            <Link
+              href="/doctor/time-off"
+              className={buttonVariants({ variant: "outline", size: "sm", className: "gap-1.5" })}
+            >
+              Time Off
+            </Link>
             <Link
               href="/doctor/slots"
-              className={buttonVariants({ variant: "default", size: "sm", className: "gap-1.5" })}
+              className={buttonVariants({ variant: "outline", size: "sm", className: "gap-1.5" })}
             >
               <Calendar className="h-4 w-4" />
-              Manage Slots
+              Slots
             </Link>
             <Link
               href="/doctor/appointments"

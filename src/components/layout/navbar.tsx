@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AuthButton } from "./auth-button";
 import { SignOutButton } from "@/components/auth/sign-out-button";
+import { NotificationBell } from "@/components/notifications/notification-bell";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -9,14 +10,20 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { Activity, Menu, Stethoscope, LayoutDashboard } from "lucide-react";
-import { type NavUser, toNavUser } from "@/lib/serializers";
+import { Activity, Menu, Stethoscope, LayoutDashboard, Waves, CalendarOff } from "lucide-react";
+import { type NavUser, toNavUser, type SerializedNotification } from "@/lib/serializers";
 
 interface NavbarProps {
   user?: NavUser | null;
+  unreadNotificationsCount?: number;
+  recentNotifications?: SerializedNotification[];
 }
 
-export function Navbar({ user }: NavbarProps) {
+export function Navbar({
+  user,
+  unreadNotificationsCount = 0,
+  recentNotifications = [],
+}: NavbarProps) {
   const navUser = toNavUser(user);
 
   const dashboardUrl =
@@ -48,7 +55,7 @@ export function Navbar({ user }: NavbarProps) {
         </Link>
 
         {/* Desktop Navigation */}
-        <nav className="hidden md:flex items-center gap-8">
+        <nav className="hidden md:flex items-center gap-6">
           {navLinks.map((link) => (
             <Link
               key={link.href}
@@ -81,6 +88,26 @@ export function Navbar({ user }: NavbarProps) {
           {navUser?.role === "DOCTOR" && (
             <>
               <Link
+                href="/doctor/queue"
+                className="text-sm font-semibold text-blue-600 dark:text-blue-400 hover:opacity-80 transition-opacity flex items-center gap-1"
+              >
+                <Activity className="h-3.5 w-3.5" />
+                <span>Queue</span>
+              </Link>
+              <Link
+                href="/doctor/waves"
+                className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors flex items-center gap-1"
+              >
+                <Waves className="h-3.5 w-3.5" />
+                <span>Waves</span>
+              </Link>
+              <Link
+                href="/doctor/time-off"
+                className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+              >
+                Time Off
+              </Link>
+              <Link
                 href="/doctor/appointments"
                 className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
               >
@@ -96,17 +123,26 @@ export function Navbar({ user }: NavbarProps) {
           )}
 
           {navUser?.role === "ADMIN" && (
-            <Link
-              href="/admin/doctors"
-              className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
-            >
-              Doctor Verifications
-            </Link>
+            <>
+              <Link
+                href="/admin/doctors"
+                className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+              >
+                Doctor Verifications
+              </Link>
+            </>
           )}
         </nav>
 
-        {/* Right Section: Auth & Mobile Menu */}
+        {/* Right Section: Notification Bell, Auth & Mobile Menu */}
         <div className="flex items-center gap-3">
+          {navUser && (
+            <NotificationBell
+              unreadCount={unreadNotificationsCount}
+              recentNotifications={recentNotifications}
+            />
+          )}
+
           <AuthButton user={navUser} />
 
           {/* Mobile Navigation Drawer */}
@@ -149,6 +185,27 @@ export function Navbar({ user }: NavbarProps) {
                   {navUser?.role === "DOCTOR" && (
                     <>
                       <Link
+                        href="/doctor/queue"
+                        className="text-base font-medium text-blue-600 dark:text-blue-400 py-2 px-1 rounded-md transition-colors flex items-center gap-2"
+                      >
+                        <Activity className="h-4 w-4" />
+                        <span>Live Queue</span>
+                      </Link>
+                      <Link
+                        href="/doctor/waves"
+                        className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors flex items-center gap-2"
+                      >
+                        <Waves className="h-4 w-4" />
+                        <span>Waves</span>
+                      </Link>
+                      <Link
+                        href="/doctor/time-off"
+                        className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors flex items-center gap-2"
+                      >
+                        <CalendarOff className="h-4 w-4" />
+                        <span>Time Off</span>
+                      </Link>
+                      <Link
                         href="/doctor/appointments"
                         className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
                       >
@@ -164,12 +221,14 @@ export function Navbar({ user }: NavbarProps) {
                   )}
 
                   {navUser?.role === "ADMIN" && (
-                    <Link
-                      href="/admin/doctors"
-                      className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
-                    >
-                      Doctor Verifications
-                    </Link>
+                    <>
+                      <Link
+                        href="/admin/doctors"
+                        className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
+                      >
+                        Doctor Verifications
+                      </Link>
+                    </>
                   )}
 
                   {navUser && (

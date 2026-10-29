@@ -6,12 +6,14 @@ import { db } from "@/lib/db";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { Calendar, User, Clock, ArrowRight } from "lucide-react";
-import { formatDateIST, formatDateTimeIST, formatTimeIST } from "@/lib/time";
+import { Calendar, User, Clock, ArrowRight, Activity, AlertCircle } from "lucide-react";
+import { formatDateIST, formatDateTimeIST, formatTimeIST, getTodayISTDateString, getISTDateString } from "@/lib/time";
+import { calculateQueueEstimates, EMERGENCY_DISCLAIMER, type QueueAppointmentItem } from "@/lib/queue";
+import { formatWaveArrivalWindowIST } from "@/lib/waves";
 
 export const metadata: Metadata = {
   title: "Patient Dashboard — Medrella",
-  description: "View upcoming appointments and manage your consultations.",
+  description: "View upcoming appointments, live queue status, and manage consultations.",
 };
 
 export default async function PatientDashboardPage() {
@@ -27,13 +29,15 @@ export default async function PatientDashboardPage() {
   }
 
   const now = new Date();
+  const todayISTStr = getTodayISTDateString();
 
-  // Query appointments for counts and next appointment
+  // Query appointments for counts and active appointments
   const allAppointments = await db.appointment.findMany({
     where: {
       patientId: patient.id,
     },
     include: {
+      wave: true,
       availability: {
         include: {
           doctor: {
@@ -55,14 +59,53 @@ export default async function PatientDashboardPage() {
     },
   });
 
-  const upcomingAppts = allAppointments.filter(
-    (a) =>
-      a.availability.startTime >= now &&
-      (a.status === AppointmentStatus.PENDING || a.status === AppointmentStatus.CONFIRMED)
-  );
+  const upcomingAppts = allAppointments.filter((a) => {
+    const isFutureOrToday =
+      a.availability.startTime >= now ||
+      getISTDateString(a.availability.startTime) === todayISTStr;
+    const isActive =
+      a.status === AppointmentStatus.PENDING ||
+      a.status === AppointmentStatus.CONFIRMED ||
+      a.status === AppointmentStatus.CHECKED_IN ||
+      a.status === AppointmentStatus.IN_CONSULTATION;
+    return isFutureOrToday && isActive;
+  });
 
   const pastApptsCount = allAppointments.length - upcomingAppts.length;
   const nextAppointment = upcomingAppts[0] ?? null;
+
+  // Find active appointment for today (if any)
+  const todayActiveAppt = upcomingAppts.find(
+    (a) => getISTDateString(a.availability.startTime) === todayISTStr
+  );
+
+  let todayQueueEstimate = null;
+  if (todayActiveAppt) {
+    const docAppts = await db.appointment.findMany({
+      where: {
+        availability: { doctorId: todayActiveAppt.availability.doctorId },
+      },
+      include: { availability: true },
+      orderBy: { availability: { startTime: "asc" } },
+    });
+
+    const todayDocAppts = docAppts.filter(
+      (a) => getISTDateString(a.availability.startTime) === todayISTStr
+    );
+
+    const queueItems: QueueAppointmentItem[] = todayDocAppts.map((a) => ({
+      id: a.id,
+      status: a.status,
+      scheduledStart: a.availability.startTime,
+      scheduledEnd: a.availability.endTime,
+      actualStartAt: a.actualStartAt,
+      actualEndAt: a.actualEndAt,
+      checkedInAt: a.checkedInAt,
+    }));
+
+    const estimates = calculateQueueEstimates(queueItems, now);
+    todayQueueEstimate = estimates.get(todayActiveAppt.id) ?? null;
+  }
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-8 space-y-8">
@@ -78,7 +121,7 @@ export default async function PatientDashboardPage() {
             Welcome back, {user.name ?? "Patient"}
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Manage your medical appointments, consultations, and profile details.
+            Manage your medical appointments, track live queue positions, and view your profile.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -98,6 +141,91 @@ export default async function PatientDashboardPage() {
           </Link>
         </div>
       </div>
+
+      {/* Emergency Notice */}
+      <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground flex items-center gap-2">
+        <AlertCircle className="h-4 w-4 text-primary shrink-0" />
+        <span>{EMERGENCY_DISCLAIMER}</span>
+      </div>
+
+      {/* Live "Today" Active Queue Card */}
+      {todayActiveAppt && (
+        <Card className="border-blue-500/40 bg-blue-50/20 dark:bg-blue-950/20 shadow-md">
+          <CardHeader className="pb-3 border-b border-blue-200 dark:border-blue-900/60 flex flex-row items-center justify-between">
+            <CardTitle className="text-base font-bold text-foreground flex items-center gap-2">
+              <Activity className="h-5 w-5 text-blue-600 animate-pulse" />
+              Today&apos;s Active Consultation
+            </CardTitle>
+            <Link
+              href="/patient/appointments"
+              className="text-xs font-semibold text-primary hover:underline flex items-center gap-1"
+            >
+              View Full Live Queue <ArrowRight className="h-3 w-3" />
+            </Link>
+          </CardHeader>
+          <CardContent className="p-5 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <span className="text-base font-bold text-foreground">
+                  Dr. {todayActiveAppt.availability.doctor.user.name}
+                </span>
+                <span className="text-xs text-muted-foreground block">
+                  {todayActiveAppt.availability.doctor.specialization}
+                </span>
+                <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
+                  <span className="font-medium text-foreground">
+                    Scheduled: {formatTimeIST(todayActiveAppt.availability.startTime)} — {formatTimeIST(todayActiveAppt.availability.endTime)}
+                  </span>
+                  {todayActiveAppt.wave && todayActiveAppt.wave.status === "PUBLISHED" && (
+                    <>
+                      <span>•</span>
+                      <span className="text-primary font-semibold">
+                        Arrival Window: {formatWaveArrivalWindowIST(todayActiveAppt.wave.windowStart, todayActiveAppt.wave.windowEnd)}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Badge
+                  variant={
+                    todayActiveAppt.status === "CHECKED_IN"
+                      ? "warning"
+                      : todayActiveAppt.status === "IN_CONSULTATION"
+                      ? "default"
+                      : "success"
+                  }
+                  className="text-xs uppercase font-semibold"
+                >
+                  {todayActiveAppt.status === "CHECKED_IN"
+                    ? "Arrived / Waiting"
+                    : todayActiveAppt.status === "IN_CONSULTATION"
+                    ? "In Consultation"
+                    : todayActiveAppt.status}
+                </Badge>
+              </div>
+            </div>
+
+            {todayQueueEstimate && (
+              <div className="p-3 rounded-lg bg-card border border-border flex items-center gap-4 text-xs flex-wrap">
+                <span className="font-semibold text-foreground">
+                  Queue Position: #{todayQueueEstimate.queuePosition}
+                </span>
+                <span>•</span>
+                <span>
+                  Est. Start: <strong>{formatTimeIST(todayQueueEstimate.expectedStart)}</strong>
+                  {todayQueueEstimate.roundedDelayMinutes > 0 && (
+                    <span className="text-rose-600 font-semibold ml-1">
+                      (+{todayQueueEstimate.roundedDelayMinutes} min approx)
+                    </span>
+                  )}
+                </span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

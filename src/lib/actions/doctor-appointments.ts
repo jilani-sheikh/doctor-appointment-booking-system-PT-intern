@@ -2,7 +2,23 @@
 
 import { requireRole } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { Role, DoctorStatus, AppointmentStatus, SlotStatus, Prisma } from "@/generated/prisma/client";
+import {
+  Role,
+  DoctorStatus,
+  AppointmentStatus,
+  NotificationType,
+  WaveStatus,
+  Prisma,
+} from "@/generated/prisma/client";
+import {
+  canDoctorNoShow,
+  isValidTransition,
+  isTerminalStatus,
+} from "@/lib/appointment-status";
+import { releaseSlot, notifyWaitlistAfterSlotRelease } from "@/lib/slots";
+import { createNotification } from "@/lib/notifications";
+import { formatDateTimeIST } from "@/lib/time";
+import { formatWaveArrivalWindowIST } from "@/lib/waves";
 import { revalidatePath } from "next/cache";
 
 type AllowedDoctorTransition = "CONFIRMED" | "CANCELLED" | "COMPLETED" | "NO_SHOW";
@@ -12,11 +28,10 @@ type AllowedDoctorTransition = "CONFIRMED" | "CANCELLED" | "COMPLETED" | "NO_SHO
  * Enforces:
  * - Approved doctor authorization
  * - Strict doctor ownership check
- * - Valid transition matrix:
- *   - PENDING -> CONFIRMED, CANCELLED
- *   - CONFIRMED -> COMPLETED, NO_SHOW (only after start time), CANCELLED
- *   - CANCELLED -> frees slot to AVAILABLE in a single atomic transaction
- *   - COMPLETED / NO_SHOW / CANCELLED are terminal/final
+ * - Valid transition matrix via single source of truth (lib/appointment-status.ts)
+ * - Releases slots using shared releaseSlot helper on cancellation
+ * - Triggers APPOINTMENT_CONFIRMED / APPOINTMENT_CANCELLED notifications
+ * - Handles late additions to published waves when capacity remains (Amendment 5b)
  */
 export async function updateDoctorAppointmentStatusAction(
   appointmentId: string,
@@ -33,6 +48,7 @@ export async function updateDoctorAppointmentStatusAction(
     where: { id: appointmentId },
     include: {
       availability: true,
+      patient: { select: { userId: true, user: { select: { name: true } } } },
     },
   });
 
@@ -44,73 +60,161 @@ export async function updateDoctorAppointmentStatusAction(
   const now = new Date();
 
   // Terminal state check
-  if (
-    current === AppointmentStatus.COMPLETED ||
-    current === AppointmentStatus.CANCELLED ||
-    current === AppointmentStatus.NO_SHOW
-  ) {
+  if (isTerminalStatus(current)) {
     return {
       success: false,
       error: `Appointment is already in ${current.toLowerCase()} status and cannot be changed.`,
     };
   }
 
-  // Validate state transitions
-  if (current === AppointmentStatus.PENDING) {
-    if (targetStatus !== "CONFIRMED" && targetStatus !== "CANCELLED") {
-      return {
-        success: false,
-        error: `Pending appointments can only be confirmed or cancelled. Received: ${targetStatus}.`,
-      };
-    }
-  } else if (current === AppointmentStatus.CONFIRMED) {
-    if (targetStatus === "NO_SHOW") {
-      if (now < appointment.availability.startTime) {
-        return {
-          success: false,
-          error: "No-Show can only be recorded after the consultation scheduled start time has passed.",
-        };
-      }
-    } else if (targetStatus !== "COMPLETED" && targetStatus !== "CANCELLED") {
-      return {
-        success: false,
-        error: `Confirmed appointments can only transition to Completed, No-Show, or Cancelled.`,
-      };
+  // Validate state transitions via centralized domain rules
+  if (!isValidTransition(current, targetStatus as AppointmentStatus, Role.DOCTOR)) {
+    return {
+      success: false,
+      error: `Transition from ${current} to ${targetStatus} is not permitted for doctor role.`,
+    };
+  }
+
+  // Timing check for No-Show
+  if (targetStatus === "NO_SHOW") {
+    const noShowEval = canDoctorNoShow(
+      { status: current, startTime: appointment.availability.startTime },
+      now
+    );
+    if (!noShowEval.allowed) {
+      return { success: false, error: noShowEval.reason ?? "Cannot mark No-Show at this time." };
     }
   }
 
   try {
+    let newlyFreedSlot = false;
+    let freedSlotStartTime: Date = appointment.availability.startTime;
+    let assignedWaveArrivalWindow: string | null = null;
+
     if (targetStatus === "CANCELLED") {
-      // In a single atomic transaction: mark appointment cancelled and free slot back to AVAILABLE
+      // In a transaction: mark cancelled, clear waveId, and free slot using releaseSlot helper
       await db.$transaction(
         async (tx) => {
           await tx.appointment.update({
             where: { id: appointmentId },
             data: {
               status: AppointmentStatus.CANCELLED,
-              cancelledAt: new Date(),
+              cancelledAt: now,
+              waveId: null,
             },
           });
 
-          await tx.availability.update({
-            where: { id: appointment.availabilityId },
-            data: {
-              status: SlotStatus.AVAILABLE,
-            },
-          });
+          const release = await releaseSlot(tx, appointment.availabilityId);
+          newlyFreedSlot = release.newlyAvailable;
+          freedSlotStartTime = release.startTime;
         },
         { maxWait: 10000, timeout: 20000 }
       );
-    } else {
+
+      // Notify patient of doctor cancellation
+      const slotTimeFormatted = formatDateTimeIST(appointment.availability.startTime);
+      await createNotification({
+        userId: appointment.patient.userId,
+        type: NotificationType.APPOINTMENT_CANCELLED,
+        title: "Appointment Cancelled by Practitioner",
+        body: `Dr. ${user.name ?? "Your doctor"} has cancelled your consultation scheduled for ${slotTimeFormatted}.`,
+        href: "/patient/appointments",
+      });
+
+      // Notify waitlist if slot became available
+      if (newlyFreedSlot) {
+        await notifyWaitlistAfterSlotRelease(doctor.id, freedSlotStartTime);
+      }
+    } else if (targetStatus === "CONFIRMED") {
+      // Late addition to wave check:
+      // If a published wave exists for this doctor covering the slot and has capacity remaining, assign it!
+      const matchingWave = await db.wave.findFirst({
+        where: {
+          OR: [
+            { doctorId: doctor.id },
+            { doctorId: null, specialization: doctor.specialization },
+          ],
+          status: WaveStatus.PUBLISHED,
+          windowStart: { lte: appointment.availability.startTime },
+          windowEnd: { gt: appointment.availability.startTime },
+        },
+        include: {
+          _count: { select: { appointments: true } },
+        },
+      });
+
+      let waveIdToAssign: string | null = null;
+      if (matchingWave && matchingWave._count.appointments < matchingWave.capacity) {
+        waveIdToAssign = matchingWave.id;
+        assignedWaveArrivalWindow = formatWaveArrivalWindowIST(
+          matchingWave.windowStart,
+          matchingWave.windowEnd
+        );
+      }
+
       await db.appointment.update({
         where: { id: appointmentId },
         data: {
-          status: targetStatus as AppointmentStatus,
+          status: AppointmentStatus.CONFIRMED,
+          waveId: waveIdToAssign,
+        },
+      });
+
+      // If assigned to a published wave, notify patient with deduplication
+      if (waveIdToAssign && matchingWave) {
+        const notifHref = `/patient/appointments?waveId=${matchingWave.id}`;
+        const existingNotif = await db.notification.findFirst({
+          where: {
+            userId: appointment.patient.userId,
+            type: NotificationType.WAVE_PUBLISHED,
+            href: notifHref,
+          },
+        });
+        if (!existingNotif) {
+          await db.notification.create({
+            data: {
+              userId: appointment.patient.userId,
+              type: NotificationType.WAVE_PUBLISHED,
+              title: "Consultation Arrival Window Assigned",
+              body: `Your consultation arrival window is ${assignedWaveArrivalWindow}. Your consultation slot remains unchanged.`,
+              href: notifHref,
+            },
+          });
+        }
+      }
+
+      // Notify patient of confirmation
+      const slotTimeFormatted = formatDateTimeIST(appointment.availability.startTime);
+      const arrivalNote = assignedWaveArrivalWindow
+        ? ` Arrival window: ${assignedWaveArrivalWindow}.`
+        : "";
+
+      await createNotification({
+        userId: appointment.patient.userId,
+        type: NotificationType.APPOINTMENT_CONFIRMED,
+        title: "Consultation Confirmed",
+        body: `Your consultation with Dr. ${user.name ?? "Practitioner"} on ${slotTimeFormatted} has been confirmed.${arrivalNote}`,
+        href: "/patient/appointments",
+      });
+    } else if (targetStatus === "COMPLETED") {
+      await db.appointment.update({
+        where: { id: appointmentId },
+        data: {
+          status: AppointmentStatus.COMPLETED,
+          actualEndAt: now,
+        },
+      });
+    } else if (targetStatus === "NO_SHOW") {
+      await db.appointment.update({
+        where: { id: appointmentId },
+        data: {
+          status: AppointmentStatus.NO_SHOW,
         },
       });
     }
 
     revalidatePath("/doctor/appointments");
+    revalidatePath("/doctor/queue");
     revalidatePath("/doctor/dashboard");
     revalidatePath("/patient/appointments");
     revalidatePath("/patient/dashboard");
@@ -129,7 +233,7 @@ export async function updateDoctorAppointmentStatusAction(
         };
       }
       if (error.code === "P2028") {
-        console.error("[Medrella Doctor Status Update] Prisma transaction API error (P2028):", error);
+        console.error("[updateDoctorAppointmentStatusAction] Prisma transaction API error (P2028):", error);
         return {
           success: false,
           error: "Operation timed out or connection was interrupted. Please try again.",
@@ -137,7 +241,7 @@ export async function updateDoctorAppointmentStatusAction(
       }
     }
 
-    console.error("[Medrella Doctor Status Update] Error:", error);
+    console.error("[updateDoctorAppointmentStatusAction] Error:", error);
     return {
       success: false,
       error: "Failed to update appointment status. Please try again.",

@@ -142,3 +142,29 @@ export function formatSlotTimeRangeIST(start: Date | string | number, end: Date 
   return `${formatTimeIST(start)} - ${formatTimeIST(end)}`;
 }
 
+/**
+ * Returns the exact UTC start and end timestamps representing an entire IST calendar day (00:00:00.000 to 23:59:59.999 IST).
+ * India Standard Time has a fixed offset of UTC+05:30 with no Daylight Saving Time.
+ *
+ * Example: For dateStr = "2026-10-29"
+ * start: 2026-10-28T18:30:00.000Z (00:00:00.000 IST)
+ * end:   2026-10-29T18:29:59.999Z (23:59:59.999 IST)
+ * nextDayStart: 2026-10-29T18:30:00.000Z (00:00:00.000 IST next day)
+ */
+export function getISTDayRangeUTC(dateStr: string): { start: Date; end: Date; nextDayStart: Date } {
+  const [yearStr, monthStr, dayStr] = dateStr.split("-");
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  const day = parseInt(dayStr, 10);
+
+  const startUtcMillis = Date.UTC(year, month - 1, day, 0, 0, 0, 0) - IST_OFFSET_MS;
+  const nextDayUtcMillis = Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0) - IST_OFFSET_MS;
+  const endUtcMillis = nextDayUtcMillis - 1;
+
+  return {
+    start: new Date(startUtcMillis),
+    end: new Date(endUtcMillis),
+    nextDayStart: new Date(nextDayUtcMillis),
+  };
+}
+

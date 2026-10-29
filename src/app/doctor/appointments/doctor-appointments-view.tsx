@@ -18,7 +18,9 @@ import {
   FileText,
 } from "lucide-react";
 import { formatDateTimeIST, formatTimeIST } from "@/lib/time";
-import type { AppointmentStatus } from "@/generated/prisma/client";
+import { STREAM_CONFIGS } from "@/lib/streams";
+import Link from "next/link";
+import type { AppointmentStatus } from "@/generated/prisma/enums";
 import type { SerializedDoctorAppointment } from "@/lib/serializers";
 export type { SerializedDoctorAppointment };
 
@@ -66,6 +68,10 @@ export function DoctorAppointmentsView({
         return <Badge variant="warning" className="text-[10px] uppercase">Pending</Badge>;
       case "CONFIRMED":
         return <Badge variant="success" className="text-[10px] uppercase">Confirmed</Badge>;
+      case "CHECKED_IN":
+        return <Badge variant="default" className="text-[10px] uppercase bg-blue-600 text-white">Checked In</Badge>;
+      case "IN_CONSULTATION":
+        return <Badge variant="default" className="text-[10px] uppercase bg-amber-600 text-white animate-pulse">In Consultation</Badge>;
       case "COMPLETED":
         return <Badge variant="default" className="text-[10px] uppercase bg-emerald-600">Completed</Badge>;
       case "CANCELLED":
@@ -95,6 +101,13 @@ export function DoctorAppointmentsView({
                   {appt.patient.name}
                 </span>
                 {getStatusBadge(appt.status)}
+                {appt.stream && (
+                  <span
+                    className={`text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full border ${STREAM_CONFIGS[appt.stream]?.badgeClassName ?? "bg-muted text-foreground"}`}
+                  >
+                    {STREAM_CONFIGS[appt.stream]?.label ?? appt.stream}
+                  </span>
+                )}
               </div>
 
               <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
@@ -126,6 +139,18 @@ export function DoctorAppointmentsView({
 
             {/* Actions based on transition table */}
             <div className="flex flex-wrap items-center gap-2 shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-border">
+              {(appt.status === "CHECKED_IN" || appt.status === "IN_CONSULTATION") && (
+                <Link href="/doctor/queue">
+                  <Button
+                    variant="default"
+                    size="xs"
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground gap-1"
+                  >
+                    Manage in Live Queue &rarr;
+                  </Button>
+                </Link>
+              )}
+
               {appt.status === "PENDING" && (
                 <>
                   <Button
