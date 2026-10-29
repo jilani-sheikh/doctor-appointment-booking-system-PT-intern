@@ -27,8 +27,8 @@ test("isTerminalStatus and isActiveStatus identify correct sets", () => {
 });
 
 test("isValidTransition: validates role and status transitions correctly", () => {
-  // PENDING -> CONFIRMED (Doctor/Admin only)
-  assert.equal(isValidTransition(AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, Role.DOCTOR), true);
+  // PENDING -> CONFIRMED (Admin legacy/migration only; Doctor cannot confirm)
+  assert.equal(isValidTransition(AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, Role.DOCTOR), false);
   assert.equal(isValidTransition(AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, Role.ADMIN), true);
   assert.equal(isValidTransition(AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, Role.PATIENT), false);
 

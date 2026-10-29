@@ -281,12 +281,12 @@ async function runConcurrencyTests() {
             },
           });
 
-          // 3. Update appointment
+          // 3. Update appointment (stays CONFIRMED on reschedule)
           const updatedAppt = await tx.appointment.update({
             where: { id: appointmentId },
             data: {
               availabilityId: targetSlotId,
-              status: AppointmentStatus.PENDING,
+              status: AppointmentStatus.CONFIRMED,
               rescheduleCount: { increment: 1 },
             },
           });

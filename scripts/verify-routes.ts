@@ -101,7 +101,7 @@ async function verifyRoutes() {
     },
   };
 
-  const patientDto = toPatientAppointmentDto(legacyWaveAppointment as any);
+  const patientDto = toPatientAppointmentDto(legacyWaveAppointment as unknown as Parameters<typeof toPatientAppointmentDto>[0]);
   console.log("Patient DTO arrival window for legacy published wave:", patientDto.arrivalWindow);
   assert.ok(patientDto.arrivalWindow !== null, "Patient linked to legacy PUBLISHED wave MUST see arrival window");
   assert.ok(patientDto.arrivalWindow?.includes("09:45 am"), "Arrival window must format legacy wave window start");
@@ -114,7 +114,7 @@ async function verifyRoutes() {
       status: WaveStatus.DRAFT,
     },
   };
-  const draftPatientDto = toPatientAppointmentDto(draftWaveAppointment as any);
+  const draftPatientDto = toPatientAppointmentDto(draftWaveAppointment as unknown as Parameters<typeof toPatientAppointmentDto>[0]);
   console.log("Patient DTO arrival window for DRAFT wave:", draftPatientDto.arrivalWindow);
   assert.equal(draftPatientDto.arrivalWindow, null, "DRAFT waves must NEVER be visible to patients");
 
