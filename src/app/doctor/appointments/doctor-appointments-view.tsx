@@ -1,6 +1,7 @@
 "use client";
 
-import { useTransition } from "react";
+import { useEffect, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { updateDoctorAppointmentStatusAction } from "@/lib/actions/doctor-appointments";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,17 +36,27 @@ export function DoctorAppointmentsView({
   upcomingAppointments,
   historyAppointments,
 }: DoctorAppointmentsViewProps) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Auto-refresh appointments every 30 seconds while tab is active and visible
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        router.refresh();
+      }
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [router]);
 
   const handleStatusChange = (
     appointmentId: string,
-    targetStatus: "CONFIRMED" | "CANCELLED" | "COMPLETED" | "NO_SHOW"
+    targetStatus: "CANCELLED" | "COMPLETED" | "NO_SHOW"
   ) => {
     const actionLabel =
       targetStatus === "CANCELLED"
         ? "cancel this appointment and free the slot"
-        : targetStatus === "CONFIRMED"
-        ? "confirm this consultation"
         : targetStatus === "COMPLETED"
         ? "mark this consultation as completed"
         : "record this as a no-show";
@@ -149,31 +160,6 @@ export function DoctorAppointmentsView({
                     Manage in Live Queue &rarr;
                   </Button>
                 </Link>
-              )}
-
-              {appt.status === "PENDING" && (
-                <>
-                  <Button
-                    variant="default"
-                    size="xs"
-                    disabled={isPending}
-                    onClick={() => handleStatusChange(appt.id, "CONFIRMED")}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
-                  >
-                    <CheckCircle2 className="h-3 w-3" />
-                    Confirm
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    size="xs"
-                    disabled={isPending}
-                    onClick={() => handleStatusChange(appt.id, "CANCELLED")}
-                    className="gap-1"
-                  >
-                    <Ban className="h-3 w-3" />
-                    Decline / Cancel
-                  </Button>
-                </>
               )}
 
               {appt.status === "CONFIRMED" && (

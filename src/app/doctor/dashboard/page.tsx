@@ -22,7 +22,6 @@ export default async function DoctorDashboardPage() {
   const isApproved = doctor?.status === DoctorStatus.APPROVED;
 
   let todayAppointmentsCount = 0;
-  let pendingConfirmationsCount = 0;
   let upcomingTotalCount = 0;
   let openSlotsCount = 0;
 
@@ -57,10 +56,6 @@ export default async function DoctorDashboardPage() {
     openSlotsCount = availableSlots;
 
     for (const appt of allDoctorAppts) {
-      if (appt.status === AppointmentStatus.PENDING) {
-        pendingConfirmationsCount++;
-      }
-
       const slotDateIST = getISTDateString(appt.availability.startTime);
       if (
         slotDateIST === todayIST &&
@@ -168,23 +163,14 @@ export default async function DoctorDashboardPage() {
         )}
       </div>
 
-      {/* Stats Cards (Milestone 4) */}
+      {/* Stats Cards */}
       {isApproved && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Card className="border-border shadow-xs">
             <CardHeader className="py-3 px-4">
               <CardDescription className="text-xs">Today&apos;s Appointments</CardDescription>
               <CardTitle className="text-2xl font-bold text-foreground">
                 {todayAppointmentsCount}
-              </CardTitle>
-            </CardHeader>
-          </Card>
-
-          <Card className="border-border shadow-xs">
-            <CardHeader className="py-3 px-4">
-              <CardDescription className="text-xs">Pending Confirmations</CardDescription>
-              <CardTitle className="text-2xl font-bold text-amber-600 dark:text-amber-400">
-                {pendingConfirmationsCount}
               </CardTitle>
             </CardHeader>
           </Card>
@@ -282,7 +268,7 @@ export default async function DoctorDashboardPage() {
                     Doctor Slot & Consultation Workflow
                   </h3>
                   <p className="text-xs text-muted-foreground max-w-sm mx-auto mt-1">
-                    Bulk-generate consultation slots, manage cancellations, and confirm appointments.
+                    Bulk-generate consultation slots, manage cancellations, and track patient consultations.
                   </p>
                 </div>
                 {isApproved && (
