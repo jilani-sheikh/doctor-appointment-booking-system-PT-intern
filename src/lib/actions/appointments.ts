@@ -9,22 +9,31 @@ import {
   SlotStatus,
   AppointmentStatus,
   NotificationType,
+  WaveStatus,
   VisitStream,
   Prisma,
 } from "@/generated/prisma/client";
 import { canPatientCancel } from "@/lib/appointment-status";
 import { releaseSlot, notifyWaitlistAfterSlotRelease } from "@/lib/slots";
 import { createNotification } from "@/lib/notifications";
-import { formatDateTimeIST } from "@/lib/time";
+import { formatDateTimeIST, formatDateIST, getISTDateString, getISTDayRangeUTC } from "@/lib/time";
+import { formatWaveArrivalWindowIST } from "@/lib/waves";
+import {
+  MAX_ACTIVE_UPCOMING_APPOINTMENTS_PER_PATIENT,
+  MAX_ACTIVE_APPOINTMENTS_PER_DOCTOR_PER_DAY,
+} from "@/lib/constants";
 import { revalidatePath } from "next/cache";
 
 /**
  * Books an appointment for a patient in a single atomic transaction.
  * Enforces:
  * - Patient authentication & completed patient profile
+ * - Abuse guards: <= 3 active upcoming bookings per patient, <= 1 active booking per doctor per day
  * - Slot must be AVAILABLE and start > now + 1 hour
  * - Doctor must be APPROVED
  * - Never trusts client-supplied IDs
+ * - Auto-confirms appointment immediately with status CONFIRMED
+ * - Joins published wave if capacity remains and window has not passed
  * - Handles race conditions and catches partial unique index collisions (P2002)
  */
 export async function bookAppointmentAction(input: BookAppointmentInput) {
@@ -58,6 +67,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
         select: {
           id: true,
           status: true,
+          specialization: true,
           user: { select: { id: true, name: true } },
         },
       },
@@ -76,6 +86,59 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
     return {
       success: false,
       error: "Appointments must be booked at least 1 hour in advance.",
+    };
+  }
+
+  // Abuse guard 1: Limit patient to at most 3 active upcoming appointments (CONFIRMED/CHECKED_IN, slot in future)
+  const activeUpcomingCount = await db.appointment.count({
+    where: {
+      patientId,
+      availability: {
+        startTime: { gt: now },
+      },
+      status: {
+        in: [
+          AppointmentStatus.CONFIRMED,
+          AppointmentStatus.CHECKED_IN,
+          AppointmentStatus.PENDING,
+        ],
+      },
+    },
+  });
+
+  if (activeUpcomingCount >= MAX_ACTIVE_UPCOMING_APPOINTMENTS_PER_PATIENT) {
+    return {
+      success: false,
+      error: `You already have ${activeUpcomingCount} active upcoming consultations (maximum allowed is ${MAX_ACTIVE_UPCOMING_APPOINTMENTS_PER_PATIENT}). Please complete or cancel an existing consultation before booking a new one.`,
+    };
+  }
+
+  // Abuse guard 2: Limit patient to at most 1 active booking per doctor per day (IST)
+  const slotDateISTStr = getISTDateString(slot.startTime);
+  const { start: dayStart, end: dayEnd } = getISTDayRangeUTC(slotDateISTStr);
+
+  const existingDoctorBookingOnDay = await db.appointment.findFirst({
+    where: {
+      patientId,
+      availability: {
+        doctorId: slot.doctor.id,
+        startTime: { gte: dayStart, lte: dayEnd },
+      },
+      status: {
+        in: [
+          AppointmentStatus.CONFIRMED,
+          AppointmentStatus.CHECKED_IN,
+          AppointmentStatus.IN_CONSULTATION,
+          AppointmentStatus.PENDING,
+        ],
+      },
+    },
+  });
+
+  if (existingDoctorBookingOnDay) {
+    return {
+      success: false,
+      error: `You already have an active consultation booked with Dr. ${slot.doctor.user.name ?? "this practitioner"} on this date (${formatDateIST(slot.startTime)}). Patients are limited to ${MAX_ACTIVE_APPOINTMENTS_PER_DOCTOR_PER_DAY} active consultation per doctor per day.`,
     };
   }
 
@@ -98,42 +161,92 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
           throw new Error("SLOT_UNAVAILABLE");
         }
 
-        // 2. Create Appointment record with requested visit stream
+        // 2. Wave assignment: join existing PUBLISHED wave of this doctor only if capacity remains and window has not passed
+        const matchingWave = await tx.wave.findFirst({
+          where: {
+            OR: [
+              { doctorId: slot.doctor.id },
+              { doctorId: null, specialization: slot.doctor.specialization },
+            ],
+            status: WaveStatus.PUBLISHED,
+            windowStart: { lte: slot.startTime },
+            windowEnd: { gt: slot.startTime },
+          },
+          include: {
+            _count: { select: { appointments: true } },
+          },
+        });
+
+        let waveIdToAssign: string | null = null;
+        let assignedWaveArrivalWindow: string | null = null;
+
+        if (matchingWave && matchingWave._count.appointments < matchingWave.capacity) {
+          waveIdToAssign = matchingWave.id;
+          assignedWaveArrivalWindow = formatWaveArrivalWindowIST(
+            matchingWave.windowStart,
+            matchingWave.windowEnd
+          );
+        }
+
+        // 3. Create Appointment record with status CONFIRMED directly
         const appt = await tx.appointment.create({
           data: {
             patientId,
             availabilityId,
             reason,
             stream: stream as VisitStream,
-            status: AppointmentStatus.PENDING,
+            status: AppointmentStatus.CONFIRMED,
+            waveId: waveIdToAssign,
           },
         });
 
-        return appt;
+        return { appt, waveIdToAssign, assignedWaveArrivalWindow };
       },
       { maxWait: 10000, timeout: 20000 }
     );
 
-    // Notify doctor of new pending booking
+    // Notifications dispatched post-commit (catch and log so failed notification never fails booking)
     const slotTimeFormatted = formatDateTimeIST(slot.startTime);
-    await createNotification({
-      userId: slot.doctor.user.id,
-      type: NotificationType.GENERAL,
-      title: "New Appointment Request",
-      body: `${user.name ?? "A patient"} has booked a consultation for ${slotTimeFormatted}. Awaiting your confirmation.`,
-      href: "/doctor/appointments",
-    });
+    const doctorName = slot.doctor.user.name ?? "Practitioner";
+    const arrivalNote = appointment.assignedWaveArrivalWindow
+      ? ` Arrival window: ${appointment.assignedWaveArrivalWindow}.`
+      : "";
 
+    try {
+      // 1. Patient notification: APPOINTMENT_CONFIRMED
+      await createNotification({
+        userId: user.id,
+        type: NotificationType.APPOINTMENT_CONFIRMED,
+        title: "Your appointment is booked",
+        body: `Your consultation with Dr. ${doctorName} on ${slotTimeFormatted} is confirmed.${arrivalNote}`,
+        href: "/patient/appointments",
+      });
+
+      // 2. Doctor notification: GENERAL linking to /doctor/queue
+      await createNotification({
+        userId: slot.doctor.user.id,
+        type: NotificationType.GENERAL,
+        title: "New Booking Confirmed",
+        body: `New booking: ${user.name ?? "Patient"}, ${slotTimeFormatted}`,
+        href: "/doctor/queue",
+      });
+    } catch (notifError) {
+      console.error("[bookAppointmentAction] Error sending post-commit notifications:", notifError);
+    }
+
+    // Cache revalidation for fresh queue, appointments, waves, and dashboard views
     revalidatePath(`/doctors/${slot.doctorId}`);
     revalidatePath("/patient/appointments");
     revalidatePath("/patient/dashboard");
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/dashboard");
+    revalidatePath("/doctor/queue");
+    revalidatePath("/doctor/waves");
 
     return {
       success: true,
-      appointmentId: appointment.id,
-      message: "Appointment successfully booked! Awaiting doctor confirmation.",
+      appointmentId: appointment.appt.id,
+      message: "Your appointment is booked",
     };
   } catch (error) {
     if (
