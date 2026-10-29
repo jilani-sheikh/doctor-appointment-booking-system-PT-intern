@@ -7,7 +7,6 @@ import {
   DoctorStatus,
   AppointmentStatus,
   NotificationType,
-  WaveStatus,
   Prisma,
 } from "@/generated/prisma/client";
 import {
@@ -18,10 +17,9 @@ import {
 import { releaseSlot, notifyWaitlistAfterSlotRelease } from "@/lib/slots";
 import { createNotification } from "@/lib/notifications";
 import { formatDateTimeIST } from "@/lib/time";
-import { formatWaveArrivalWindowIST } from "@/lib/waves";
 import { revalidatePath } from "next/cache";
 
-type AllowedDoctorTransition = "CONFIRMED" | "CANCELLED" | "COMPLETED" | "NO_SHOW";
+type AllowedDoctorTransition = "CANCELLED" | "COMPLETED" | "NO_SHOW";
 
 /**
  * Updates an appointment's status according to the clinical transition rules.
@@ -30,8 +28,7 @@ type AllowedDoctorTransition = "CONFIRMED" | "CANCELLED" | "COMPLETED" | "NO_SHO
  * - Strict doctor ownership check
  * - Valid transition matrix via single source of truth (lib/appointment-status.ts)
  * - Releases slots using shared releaseSlot helper on cancellation
- * - Triggers APPOINTMENT_CONFIRMED / APPOINTMENT_CANCELLED notifications
- * - Handles late additions to published waves when capacity remains (Amendment 5b)
+ * - Triggers APPOINTMENT_CANCELLED notifications
  */
 export async function updateDoctorAppointmentStatusAction(
   appointmentId: string,
@@ -89,7 +86,6 @@ export async function updateDoctorAppointmentStatusAction(
   try {
     let newlyFreedSlot = false;
     let freedSlotStartTime: Date = appointment.availability.startTime;
-    let assignedWaveArrivalWindow: string | null = null;
 
     if (targetStatus === "CANCELLED") {
       // In a transaction: mark cancelled, clear waveId, and free slot using releaseSlot helper
@@ -125,77 +121,6 @@ export async function updateDoctorAppointmentStatusAction(
       if (newlyFreedSlot) {
         await notifyWaitlistAfterSlotRelease(doctor.id, freedSlotStartTime);
       }
-    } else if (targetStatus === "CONFIRMED") {
-      // Late addition to wave check:
-      // If a published wave exists for this doctor covering the slot and has capacity remaining, assign it!
-      const matchingWave = await db.wave.findFirst({
-        where: {
-          OR: [
-            { doctorId: doctor.id },
-            { doctorId: null, specialization: doctor.specialization },
-          ],
-          status: WaveStatus.PUBLISHED,
-          windowStart: { lte: appointment.availability.startTime },
-          windowEnd: { gt: appointment.availability.startTime },
-        },
-        include: {
-          _count: { select: { appointments: true } },
-        },
-      });
-
-      let waveIdToAssign: string | null = null;
-      if (matchingWave && matchingWave._count.appointments < matchingWave.capacity) {
-        waveIdToAssign = matchingWave.id;
-        assignedWaveArrivalWindow = formatWaveArrivalWindowIST(
-          matchingWave.windowStart,
-          matchingWave.windowEnd
-        );
-      }
-
-      await db.appointment.update({
-        where: { id: appointmentId },
-        data: {
-          status: AppointmentStatus.CONFIRMED,
-          waveId: waveIdToAssign,
-        },
-      });
-
-      // If assigned to a published wave, notify patient with deduplication
-      if (waveIdToAssign && matchingWave) {
-        const notifHref = `/patient/appointments?waveId=${matchingWave.id}`;
-        const existingNotif = await db.notification.findFirst({
-          where: {
-            userId: appointment.patient.userId,
-            type: NotificationType.WAVE_PUBLISHED,
-            href: notifHref,
-          },
-        });
-        if (!existingNotif) {
-          await db.notification.create({
-            data: {
-              userId: appointment.patient.userId,
-              type: NotificationType.WAVE_PUBLISHED,
-              title: "Consultation Arrival Window Assigned",
-              body: `Your consultation arrival window is ${assignedWaveArrivalWindow}. Your consultation slot remains unchanged.`,
-              href: notifHref,
-            },
-          });
-        }
-      }
-
-      // Notify patient of confirmation
-      const slotTimeFormatted = formatDateTimeIST(appointment.availability.startTime);
-      const arrivalNote = assignedWaveArrivalWindow
-        ? ` Arrival window: ${assignedWaveArrivalWindow}.`
-        : "";
-
-      await createNotification({
-        userId: appointment.patient.userId,
-        type: NotificationType.APPOINTMENT_CONFIRMED,
-        title: "Consultation Confirmed",
-        body: `Your consultation with Dr. ${user.name ?? "Practitioner"} on ${slotTimeFormatted} has been confirmed.${arrivalNote}`,
-        href: "/patient/appointments",
-      });
     } else if (targetStatus === "COMPLETED") {
       await db.appointment.update({
         where: { id: appointmentId },

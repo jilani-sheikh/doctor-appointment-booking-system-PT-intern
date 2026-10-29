@@ -206,7 +206,7 @@ export function isValidTransition(
   switch (current) {
     case AppointmentStatus.PENDING:
       if (target === AppointmentStatus.CONFIRMED) {
-        return role === Role.DOCTOR || role === Role.ADMIN;
+        return role === Role.ADMIN; // Legacy path usable by admin or data migration; doctors do not confirm bookings
       }
       if (target === AppointmentStatus.CANCELLED) {
         return true; // patient, doctor, or admin
