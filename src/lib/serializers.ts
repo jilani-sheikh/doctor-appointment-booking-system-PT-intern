@@ -749,6 +749,7 @@ export interface SerializedPaymentItem {
   doctorName: string;
   doctorSpecialization: string;
   slotStartTime: string;
+  slotEndTime?: string | null;
   totalRefunded: number;
   refundStatus: string | null;
   refunds: SerializedRefundItem[];
@@ -774,6 +775,7 @@ export function toPaymentDto(payment: {
   appointment?: {
     availability?: {
       startTime: Date;
+      endTime?: Date;
       doctor?: {
         specialization: string;
         user?: { name?: string | null } | null;
@@ -804,6 +806,9 @@ export function toPaymentDto(payment: {
   const slotStartTime = payment.appointment?.availability?.startTime
     ? payment.appointment.availability.startTime.toISOString()
     : payment.createdAt.toISOString();
+  const slotEndTime = payment.appointment?.availability?.endTime
+    ? payment.appointment.availability.endTime.toISOString()
+    : null;
 
   return {
     id: payment.id,
@@ -825,6 +830,7 @@ export function toPaymentDto(payment: {
     doctorName,
     doctorSpecialization,
     slotStartTime,
+    slotEndTime,
     totalRefunded,
     refundStatus,
     refunds,

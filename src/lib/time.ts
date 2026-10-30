@@ -135,11 +135,26 @@ export function parseISTDateTime(dateStr: string, timeStr: string): Date {
 }
 
 /**
- * Formats a start and end time into an IST time range string.
- * Example: "10:00 AM - 10:30 AM"
+ * Formats a slot's start and end timestamps into an IST time range string.
+ * Standardized format: "09:00 am - 09:30 am" (IST, lowercase am/pm).
  */
-export function formatSlotTimeRangeIST(start: Date | string | number, end: Date | string | number): string {
-  return `${formatTimeIST(start)} - ${formatTimeIST(end)}`;
+export function formatSlotRange(start: Date | string | number, end: Date | string | number): string {
+  const startStr = formatTimeIST(start).toLowerCase().replace(/\s+/g, " ").trim();
+  const endStr = formatTimeIST(end).toLowerCase().replace(/\s+/g, " ").trim();
+  return `${startStr} - ${endStr}`;
+}
+
+/**
+ * Backward-compatible alias for formatSlotRange.
+ */
+export const formatSlotTimeRangeIST = formatSlotRange;
+
+/**
+ * Formats a slot's date and time range in IST.
+ * Example: "2 Nov 2026, 09:00 am - 09:30 am"
+ */
+export function formatSlotDateTimeRangeIST(start: Date | string | number, end: Date | string | number): string {
+  return `${formatDateIST(start)}, ${formatSlotRange(start, end)}`;
 }
 
 /**

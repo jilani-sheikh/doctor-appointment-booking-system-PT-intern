@@ -18,7 +18,7 @@ import {
   User,
   FileText,
 } from "lucide-react";
-import { formatDateTimeIST, formatTimeIST } from "@/lib/time";
+import { formatSlotDateTimeRangeIST } from "@/lib/time";
 import { STREAM_CONFIGS } from "@/lib/streams";
 import Link from "next/link";
 import type { AppointmentStatus } from "@/generated/prisma/enums";
@@ -124,7 +124,7 @@ export function DoctorAppointmentsView({
               <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                 <span className="flex items-center gap-1 font-semibold text-foreground">
                   <Clock className="h-3.5 w-3.5 text-primary" />
-                  {formatDateTimeIST(startDate)} - {formatTimeIST(endDate)}
+                  {formatSlotDateTimeRangeIST(startDate, endDate)}
                 </span>
                 {appt.patient.phone && (
                   <span className="flex items-center gap-1 text-foreground/80">

@@ -1,4 +1,4 @@
-import { formatDateTimeIST } from "@/lib/time";
+import { formatDateTimeIST, formatSlotDateTimeRangeIST } from "@/lib/time";
 import { formatINR } from "@/lib/money";
 import { getAppUrl } from "@/lib/env";
 
@@ -85,9 +85,14 @@ export function renderBookingConfirmedEmail(params: {
   doctorName: string;
   specialization: string;
   startTime: Date;
+  endTime?: Date;
   arrivalWindow?: string | null;
 }) {
-  const timeFormatted = `${formatDateTimeIST(params.startTime)} IST`;
+  const timeFormatted = `${
+    params.endTime
+      ? formatSlotDateTimeRangeIST(params.startTime, params.endTime)
+      : formatDateTimeIST(params.startTime)
+  } IST`;
   const appUrl = getAppUrl();
 
   const arrivalHtml = params.arrivalWindow
@@ -179,10 +184,15 @@ export function renderAppointmentCancelledEmail(params: {
   patientName: string;
   doctorName: string;
   startTime: Date;
+  endTime?: Date;
   cancelledBy: string;
   refundSummary?: string | null;
 }) {
-  const timeFormatted = `${formatDateTimeIST(params.startTime)} IST`;
+  const timeFormatted = `${
+    params.endTime
+      ? formatSlotDateTimeRangeIST(params.startTime, params.endTime)
+      : formatDateTimeIST(params.startTime)
+  } IST`;
   const appUrl = getAppUrl();
 
   const refundHtml = params.refundSummary
@@ -210,10 +220,20 @@ export function renderAppointmentRescheduledEmail(params: {
   patientName: string;
   doctorName: string;
   oldStartTime: Date;
+  oldEndTime?: Date;
   newStartTime: Date;
+  newEndTime?: Date;
 }) {
-  const oldFormatted = `${formatDateTimeIST(params.oldStartTime)} IST`;
-  const newFormatted = `${formatDateTimeIST(params.newStartTime)} IST`;
+  const oldFormatted = `${
+    params.oldEndTime
+      ? formatSlotDateTimeRangeIST(params.oldStartTime, params.oldEndTime)
+      : formatDateTimeIST(params.oldStartTime)
+  } IST`;
+  const newFormatted = `${
+    params.newEndTime
+      ? formatSlotDateTimeRangeIST(params.newStartTime, params.newEndTime)
+      : formatDateTimeIST(params.newStartTime)
+  } IST`;
   const appUrl = getAppUrl();
 
   const content = `
@@ -314,9 +334,14 @@ export function renderAppointmentReminderEmail(params: {
   patientName: string;
   doctorName: string;
   startTime: Date;
+  endTime?: Date;
   offsetMinutes: number;
 }) {
-  const timeFormatted = `${formatDateTimeIST(params.startTime)} IST`;
+  const timeFormatted = `${
+    params.endTime
+      ? formatSlotDateTimeRangeIST(params.startTime, params.endTime)
+      : formatDateTimeIST(params.startTime)
+  } IST`;
   const appUrl = getAppUrl();
 
   const reminderTimeline =
@@ -353,8 +378,13 @@ export function renderDoctorNewBookingEmail(params: {
   doctorName: string;
   patientName: string;
   startTime: Date;
+  endTime?: Date;
 }) {
-  const timeFormatted = `${formatDateTimeIST(params.startTime)} IST`;
+  const timeFormatted = `${
+    params.endTime
+      ? formatSlotDateTimeRangeIST(params.startTime, params.endTime)
+      : formatDateTimeIST(params.startTime)
+  } IST`;
   const appUrl = getAppUrl();
 
   const content = `

@@ -7,7 +7,7 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PrintReceiptButton } from "./print-button";
-import { formatDateTimeIST } from "@/lib/time";
+import { formatDateTimeIST, formatSlotDateTimeRangeIST } from "@/lib/time";
 import { formatINR } from "@/lib/money";
 import { ArrowLeft, ShieldCheck, Stethoscope } from "lucide-react";
 
@@ -49,7 +49,9 @@ export default async function PaymentReceiptPage({ params }: ReceiptPageProps) {
 
   const payment = toPaymentDto(rawPayment);
   const paidTime = payment.paidAt ? `${formatDateTimeIST(new Date(payment.paidAt))} IST` : "—";
-  const slotTime = `${formatDateTimeIST(new Date(payment.slotStartTime))} IST`;
+  const slotTime = payment.slotEndTime
+    ? `${formatSlotDateTimeRangeIST(payment.slotStartTime, payment.slotEndTime)} IST`
+    : `${formatDateTimeIST(new Date(payment.slotStartTime))} IST`;
 
   return (
     <div className="container max-w-3xl mx-auto py-8 px-4 sm:px-6">

@@ -6,7 +6,7 @@ import { Role, DoctorStatus, SlotStatus, AppointmentStatus, NotificationType, Pr
 import { canPatientReschedule } from "@/lib/appointment-status";
 import { releaseSlot, notifyWaitlistAfterSlotRelease } from "@/lib/slots";
 import { createNotification } from "@/lib/notifications";
-import { formatDateTimeIST } from "@/lib/time";
+import { formatSlotDateTimeRangeIST } from "@/lib/time";
 import {
   rescheduleAppointmentSchema,
   waitlistEntrySchema,
@@ -128,6 +128,7 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
           appointmentId,
           userId: user.id,
           slotStartTime: newSlot.startTime,
+          slotEndTime: newSlot.endTime,
           status: AppointmentStatus.CONFIRMED,
         });
 
@@ -137,7 +138,7 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
     );
 
     // Post-commit: trigger notifications
-    const newSlotTimeFormatted = formatDateTimeIST(newSlot.startTime);
+    const newSlotTimeFormatted = formatSlotDateTimeRangeIST(newSlot.startTime, newSlot.endTime);
     const doctorName = appointment.availability.doctor.user.name ?? "Practitioner";
 
     // Notify patient
@@ -157,7 +158,9 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
       payload: {
         doctorName,
         oldStartTime: appointment.availability.startTime.toISOString(),
+        oldEndTime: appointment.availability.endTime.toISOString(),
         newStartTime: newSlot.startTime.toISOString(),
+        newEndTime: newSlot.endTime.toISOString(),
       },
       dedupeKey: `email:rescheduled:${appointmentId}:${newSlot.startTime.getTime()}`,
     });
@@ -273,7 +276,7 @@ export async function doctorRescheduleAppointmentAction(input: RescheduleAppoint
       { maxWait: 10000, timeout: 20000 }
     );
 
-    const newSlotTimeFormatted = formatDateTimeIST(newSlot.startTime);
+    const newSlotTimeFormatted = formatSlotDateTimeRangeIST(newSlot.startTime, newSlot.endTime);
     const doctorName = user.name ?? "Practitioner";
 
     // Notify patient

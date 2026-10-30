@@ -18,7 +18,7 @@ import { createNotification } from "@/lib/notifications";
 import { enqueueEmail } from "@/lib/notifications/index";
 import { syncAppointmentReminders } from "@/lib/notifications/reminders";
 import { requestRefund } from "@/lib/payments/service";
-import { formatDateTimeIST } from "@/lib/time";
+import { formatSlotDateTimeRangeIST } from "@/lib/time";
 import { revalidatePath } from "next/cache";
 
 /**
@@ -134,7 +134,7 @@ export async function updateDoctorAppointmentStatusAction(
       }
 
       // Notify patient of doctor cancellation
-      const slotTimeFormatted = `${formatDateTimeIST(appointment.availability.startTime)} IST`;
+      const slotTimeFormatted = `${formatSlotDateTimeRangeIST(appointment.availability.startTime, appointment.availability.endTime)} IST`;
       await createNotification({
         userId: appointment.patient.userId,
         type: NotificationType.APPOINTMENT_CANCELLED,
@@ -153,6 +153,7 @@ export async function updateDoctorAppointmentStatusAction(
         payload: {
           doctorName: user.name || "Doctor",
           startTime: appointment.availability.startTime.toISOString(),
+          endTime: appointment.availability.endTime.toISOString(),
           cancelledBy: "DOCTOR",
           refundSummary,
         },

@@ -33,7 +33,7 @@ import {
   ShieldCheck,
   Loader2,
 } from "lucide-react";
-import { formatDateTimeIST, formatTimeIST } from "@/lib/time";
+import { formatTimeIST, formatSlotRange, formatSlotDateTimeRangeIST } from "@/lib/time";
 import { STREAM_CONFIGS } from "@/lib/streams";
 import { EMERGENCY_DISCLAIMER } from "@/lib/queue";
 import type { AppointmentStatus } from "@/generated/prisma/client";
@@ -281,7 +281,7 @@ export function AppointmentsView({
                     <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                       <span className="flex items-center gap-1 font-medium text-foreground">
                         <Clock className="h-3.5 w-3.5 text-primary" />
-                        {formatDateTimeIST(startDate)} - {formatTimeIST(endDate)}
+                        {formatSlotDateTimeRangeIST(startDate, endDate)}
                       </span>
                       <span>•</span>
                       <span>Fee: ₹{appt.doctor.consultationFee.toLocaleString("en-IN")}</span>
@@ -291,7 +291,7 @@ export function AppointmentsView({
                       <div className="rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 p-2.5 text-xs text-emerald-900 dark:text-emerald-200 flex items-center gap-2">
                         <Waves className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                         <span>
-                          Arrive between <strong>{appt.arrivalWindow.replace(" (IST)", "")} (IST)</strong>. Your consultation slot is <strong>{formatTimeIST(startDate)}</strong>.
+                          Arrive between <strong>{appt.arrivalWindow.replace(" (IST)", "")} (IST)</strong>. Your consultation slot is <strong>{formatSlotRange(startDate, endDate)}</strong>.
                         </span>
                       </div>
                     )}

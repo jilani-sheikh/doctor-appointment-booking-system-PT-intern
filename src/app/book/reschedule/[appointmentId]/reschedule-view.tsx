@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Calendar, Clock, RotateCcw, AlertTriangle } from "lucide-react";
-import { formatTimeIST, formatDateTimeIST } from "@/lib/time";
+import { formatSlotRange, formatSlotDateTimeRangeIST } from "@/lib/time";
 import { patientRescheduleAppointmentAction } from "@/lib/actions/reschedule";
 import type { SerializedPublicSlot } from "@/lib/serializers";
 
@@ -83,7 +83,7 @@ export function RescheduleView({
             <Clock className="h-3.5 w-3.5 text-primary" />
             Currently scheduled:{" "}
             <strong className="text-foreground ml-1">
-              {formatDateTimeIST(currentSlotStart)} — {formatTimeIST(currentSlotEnd)}
+              {formatSlotDateTimeRangeIST(currentSlotStart, currentSlotEnd)}
             </strong>
           </div>
 
@@ -129,26 +129,28 @@ export function RescheduleView({
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="p-4">
-                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 gap-2.5">
                       {daySlots.map((slot) => {
                         const isSelected = selectedSlotId === slot.id;
-                        const timeRange = `${formatTimeIST(slot.startTime)} - ${formatTimeIST(slot.endTime)}`;
+                        const timeRange = formatSlotRange(slot.startTime, slot.endTime);
+                        const ariaLabel = `Reschedule to ${timeRange.replace(" - ", " to ")} on ${dateLabel}`;
 
                         return (
                           <button
                             key={slot.id}
                             type="button"
+                            aria-label={ariaLabel}
                             onClick={() => {
                               setSelectedSlotId(slot.id);
                               setSelectedSlotTimeStr(`${dateLabel}, ${timeRange}`);
                             }}
-                            className={`p-2.5 rounded-lg border text-xs font-medium transition-all text-center ${
+                            className={`py-2.5 px-3 rounded-lg border text-xs font-medium transition-all text-center whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
                               isSelected
                                 ? "bg-primary text-primary-foreground border-primary shadow-xs font-bold ring-2 ring-primary/30"
                                 : "bg-card text-foreground border-border hover:border-primary/50 hover:bg-muted/30"
                             }`}
                           >
-                            {formatTimeIST(slot.startTime)}
+                            {timeRange}
                           </button>
                         );
                       })}

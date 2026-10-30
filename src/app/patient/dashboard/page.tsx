@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Calendar, User, Clock, ArrowRight, Activity, AlertCircle } from "lucide-react";
-import { formatDateIST, formatDateTimeIST, formatTimeIST, getTodayISTDateString, getISTDateString } from "@/lib/time";
+import { formatDateIST, formatTimeIST, formatSlotRange, formatSlotDateTimeRangeIST, getTodayISTDateString, getISTDateString } from "@/lib/time";
 import { calculateQueueEstimates, EMERGENCY_DISCLAIMER, type QueueAppointmentItem } from "@/lib/queue";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
 
@@ -174,7 +174,7 @@ export default async function PatientDashboardPage() {
                 </span>
                 <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
                   <span className="font-medium text-foreground">
-                    Scheduled: {formatTimeIST(todayActiveAppt.availability.startTime)} — {formatTimeIST(todayActiveAppt.availability.endTime)}
+                    Scheduled: {formatSlotRange(todayActiveAppt.availability.startTime, todayActiveAppt.availability.endTime)}
                   </span>
                   {todayActiveAppt.wave && todayActiveAppt.wave.status === "PUBLISHED" && (
                     <>
@@ -338,8 +338,7 @@ export default async function PatientDashboardPage() {
                   <div className="flex items-center gap-2 text-xs text-foreground font-semibold pt-1">
                     <Clock className="h-4 w-4 text-primary shrink-0" />
                     <span>
-                      {formatDateTimeIST(nextAppointment.availability.startTime)} -{" "}
-                      {formatTimeIST(nextAppointment.availability.endTime)}
+                      {formatSlotDateTimeRangeIST(nextAppointment.availability.startTime, nextAppointment.availability.endTime)}
                     </span>
                   </div>
 

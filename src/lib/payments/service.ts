@@ -21,7 +21,7 @@ import { rupeesToPaise, paiseToRupees, paiseToDecimalString } from "@/lib/money"
 import { normalizeIndianPhoneNumber } from "@/lib/phone";
 import { getAppUrl } from "@/lib/env";
 import { HOLD_MINUTES } from "@/lib/constants";
-import { formatDateTimeIST } from "@/lib/time";
+import { formatSlotDateTimeRangeIST } from "@/lib/time";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
 
 export interface BookWithPaymentInput {
@@ -368,6 +368,7 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
 
   const doctor = appointment.availability.doctor;
   const slotStartTime = appointment.availability.startTime;
+  const slotEndTime = appointment.availability.endTime;
 
   let waveIdToAssign: string | null = null;
   let assignedWaveArrivalWindow: string | null = null;
@@ -418,6 +419,7 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
           appointmentId,
           userId: appointment.patient.userId,
           slotStartTime,
+          slotEndTime,
           status: AppointmentStatus.CONFIRMED,
         });
       }
@@ -432,7 +434,7 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
   }
 
   // 2. Post-commit notifications (never block or fail booking if notifications fail)
-  const slotTimeFormatted = formatDateTimeIST(slotStartTime);
+  const slotTimeFormatted = formatSlotDateTimeRangeIST(slotStartTime, slotEndTime);
   const doctorName = doctor.user.name ?? "Practitioner";
   const arrivalNote = assignedWaveArrivalWindow
     ? ` Arrival window: ${assignedWaveArrivalWindow} IST.`
@@ -466,6 +468,7 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
         doctorName,
         specialization: doctor.specialization,
         startTime: slotStartTime.toISOString(),
+        endTime: slotEndTime.toISOString(),
         arrivalWindow: assignedWaveArrivalWindow,
       },
       dedupeKey: `email:booking_confirmed:${appointmentId}`,

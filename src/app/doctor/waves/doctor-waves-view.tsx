@@ -39,7 +39,7 @@ import {
   deleteDoctorDraftWaveAction,
   reassignDoctorWaveAppointmentAction,
 } from "@/lib/actions/waves";
-import { formatTimeIST } from "@/lib/time";
+import { formatTimeIST, formatSlotRange } from "@/lib/time";
 import type { SerializedDoctorWaveWithAppointments, SerializedUnassignedAppointment } from "./page";
 
 interface DoctorWaveSettings {
@@ -534,7 +534,7 @@ export function DoctorWavesView({
                                   <User className="h-3.5 w-3.5 text-primary" />
                                   <span className="font-medium text-foreground">{appt.patientName}</span>
                                   <span className="text-muted-foreground">
-                                    Slot: {formatTimeIST(appt.slotStartTime)}
+                                    Slot: {formatSlotRange(appt.slotStartTime, appt.slotEndTime)}
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-2">
@@ -589,7 +589,7 @@ export function DoctorWavesView({
                     </div>
                     <div className="text-muted-foreground flex items-center gap-1">
                       <Clock className="h-3 w-3" />
-                      Slot: {formatTimeIST(appt.slotStartTime)} – {formatTimeIST(appt.slotEndTime)}
+                      Slot: {formatSlotRange(appt.slotStartTime, appt.slotEndTime)}
                     </div>
                     {waves.length > 0 && (
                       <div className="pt-1">
