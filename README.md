@@ -580,4 +580,26 @@ Setup an external cron monitor (e.g. [cron-job.org](https://cron-job.org), GitHu
   curl.exe -X GET "https://your-domain.vercel.app/api/cron/tick" -H "Authorization: Bearer <CRON_SECRET>"
   ```
 - **Expected Response:** HTTP 200 with JSON summary of processed holds, refunds, and email dispatches.
-
+
+## WhatsApp patient notifications (Twilio Sandbox demo)
+
+WhatsApp is patient-only and disabled by default. Configure `WHATSAPP_PROVIDER=twilio`, `WHATSAPP_MODE=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM=whatsapp:+<sandbox-number>`, and `WHATSAPP_DEFAULT_COUNTRY_CODE=91` server-side only. Never use `NEXT_PUBLIC_` for these variables. The patient must explicitly opt in; opting out cancels pending WhatsApp deliveries. The UI displays the destination as `+91 ******1234`.
+
+### Sandbox setup and limitations
+
+1. In the Twilio legacy Console, activate the WhatsApp Sandbox.
+2. Each recipient must send `join <your sandbox code>` to the Sandbox number. For this demo, have the recipient send any message to the Sandbox number shortly before testing: this opens the 24-hour customer-service window. Sandbox membership expires about every 72 hours and the recipient must rejoin. Trial accounts support up to five verified testers and trial messages are limited; recipients should use same-country numbers for this demo.
+3. The sender is the Sandbox number, so messages may show Twilio trial-account wording. The implementation sends plain text through Twilio's Messages endpoint and reports “accepted by Twilio”, not confirmed delivery. No inbound chat handling or status callback webhook is enabled.
+4. Outside the 24-hour window, free-form text is rejected (`63016`); the recipient must message the Sandbox first. Sandbox outbound messages outside that window require one of Twilio's pre-approved Sandbox templates. A production sender and approved Content Templates can be added later without changing domain call sites.
+
+The provider uses `POST https://api.twilio.com/2010-04-01/Accounts/{AccountSid}/Messages.json` with HTTP Basic authentication and form fields `From`, `To`, and `Body`. Expected non-retryable mappings include `63015` (recipient not joined), `63016` (outside the 24-hour window), `21211` (invalid number), `20003` (authentication), and trial-limit errors. HTTP `429`, `20429`, and 5xx responses retry with backoff. Twilio signs optional webhook requests with `X-Twilio-Signature` using HMAC-SHA1 over the callback URL and sorted form fields; this demo intentionally skips the callback.
+
+Manual checks:
+
+```powershell
+npm exec tsx scripts/check-whatsapp-env.ts
+npm exec tsx scripts/send-test-whatsapp.ts <your-test-recipient>
+npm exec tsx scripts/check-whatsapp-deliveries.ts
+```
+
+Use the cron endpoint after creating an opted-in patient booking to dispatch queued messages. Never place real credentials, phone numbers, tokens, or message bodies in source, tests, logs, or documentation.
