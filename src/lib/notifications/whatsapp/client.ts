@@ -1,4 +1,4 @@
-import { getTwilioConfig } from "@/lib/env";
+import { getTwilioConfig, getTwilioWhatsAppContentSid, type TwilioWhatsAppTemplate } from "@/lib/env";
 import { classifyWhatsAppError } from "./errors";
 
 export interface TwilioWhatsAppSendResult {
@@ -10,10 +10,20 @@ export interface TwilioWhatsAppSendResult {
   retryable: boolean;
 }
 
-export async function sendTwilioWhatsApp(to: string, body: string): Promise<TwilioWhatsAppSendResult> {
+export async function sendTwilioWhatsApp(
+  to: string,
+  template: TwilioWhatsAppTemplate,
+  contentVariables: Record<string, string>
+): Promise<TwilioWhatsAppSendResult> {
   const config = getTwilioConfig();
+  const contentSid = getTwilioWhatsAppContentSid(template);
   const endpoint = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(config.accountSid)}/Messages.json`;
-  const form = new URLSearchParams({ From: config.from, To: `whatsapp:${to}`, Body: body });
+  const form = new URLSearchParams({
+    From: config.from,
+    To: `whatsapp:${to}`,
+    ContentSid: contentSid,
+    ContentVariables: JSON.stringify(contentVariables),
+  });
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {

@@ -139,6 +139,16 @@ export async function enqueuePatientNotifications(
         console.info("[Outbox] WhatsApp delivery row result:", {
           rowCreated: !existingDelivery,
         });
+
+        if (txOrDb === db && whatsapp.status === DeliveryStatus.PENDING) {
+          try {
+            await dispatchWhatsAppDelivery(whatsapp.id);
+          } catch (error) {
+            console.error("[Outbox] Immediate WhatsApp dispatch failed:", {
+              errorCategory: getWhatsAppEnqueueErrorCategory(error),
+            });
+          }
+        }
       }
     } catch (error) {
       console.error("[Outbox] Patient WhatsApp enqueue failed:", {
@@ -225,6 +235,7 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
       await db.notificationDelivery.update({ where: { id: deliveryId }, data: { status: DeliveryStatus.SKIPPED, lastError: "WhatsApp is available only to patients" } });
       return true;
     }
+
     if (!delivery.user.patient?.whatsappOptIn) {
       console.info("[WhatsApp] Dispatch cancelled:", { reason: "opted_out" });
       await db.notificationDelivery.update({ where: { id: deliveryId }, data: { status: DeliveryStatus.CANCELLED, lastError: "WhatsApp opted out by patient" } });
@@ -493,6 +504,46 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
       },
     });
     return false;
+  }
+}
+
+/**
+ * Claims and dispatches one WhatsApp row without touching other channels.
+ * The conditional update makes duplicate payment/webhook/return flows safe.
+ */
+export async function dispatchWhatsAppDelivery(deliveryId: string): Promise<boolean> {
+  const claimed = await db.notificationDelivery.updateMany({
+    where: {
+      id: deliveryId,
+      channel: NotificationChannel.WHATSAPP,
+      status: DeliveryStatus.PENDING,
+      scheduledFor: { lte: new Date() },
+    },
+    data: {
+      status: DeliveryStatus.PROCESSING,
+      lockedAt: new Date(),
+    },
+  });
+
+  if (claimed.count !== 1) {
+    return false;
+  }
+
+  try {
+    return await deliverSingleNotification(deliveryId);
+  } catch (error) {
+    console.error(`[Outbox] Error dispatching WhatsApp row ${deliveryId}:`, error);
+    await db.notificationDelivery.updateMany({
+      where: {
+        id: deliveryId,
+        status: DeliveryStatus.PROCESSING,
+      },
+      data: {
+        status: DeliveryStatus.PENDING,
+        lockedAt: null,
+      },
+    });
+    throw error;
   }
 }
 

@@ -586,7 +586,7 @@ The repository includes [`vercel.json`](./vercel.json) to run this route every f
 
 ## WhatsApp patient notifications (Twilio Sandbox demo)
 
-WhatsApp is patient-only and disabled by default. Configure `WHATSAPP_PROVIDER=twilio`, `WHATSAPP_MODE=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM=whatsapp:+<sandbox-number>`, and `WHATSAPP_DEFAULT_COUNTRY_CODE=91` server-side only. Never use `NEXT_PUBLIC_` for these variables. The patient must explicitly opt in; opting out cancels pending WhatsApp deliveries. The UI displays the destination as `+91 ******1234`.
+WhatsApp is patient-only and disabled by default. Configure `WHATSAPP_PROVIDER=twilio`, `WHATSAPP_MODE=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM=whatsapp:+<sandbox-number>`, `WHATSAPP_DEFAULT_COUNTRY_CODE=91`, and one approved `HX...` Content Template SID for each `TWILIO_WHATSAPP_CONTENT_SID_*` variable in `.env.example`, server-side only. The content templates must use the documented positional variables for their corresponding notification. Never use `NEXT_PUBLIC_` for these variables. The patient must explicitly opt in; opting out cancels pending WhatsApp deliveries. The UI displays the destination as `+91 ******1234`.
 
 ### Sandbox setup and limitations
 

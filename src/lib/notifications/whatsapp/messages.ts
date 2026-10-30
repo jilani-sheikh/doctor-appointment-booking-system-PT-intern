@@ -29,6 +29,67 @@ export interface WhatsAppMessagePayload {
 
 const date = (value: string | Date) => formatDateIST(value);
 const range = (start: string | Date, end: string | Date) => formatSlotRange(start, end);
+const appLink = () => `${getAppUrl()}/patient/appointments`;
+
+export function getWhatsAppContentVariables(
+  name: WhatsAppMessageName,
+  payload: WhatsAppMessagePayload
+): Record<string, string> {
+  const doctor = payload.doctorName || "your practitioner";
+  switch (name) {
+    case "appointment_confirmed":
+      return {
+        "1": doctor,
+        "2": date(payload.startTime!),
+        "3": range(payload.startTime!, payload.endTime!),
+      };
+    case "appointment_cancelled":
+      return {
+        "1": doctor,
+        "2": date(payload.startTime!),
+        "3": range(payload.startTime!, payload.endTime!),
+        "4": payload.cancelledBy === "PATIENT" ? "you" : payload.cancelledBy === "DOCTOR" ? "the doctor" : "the system",
+        "5": payload.refundInitiated ? "A refund has been initiated." : "",
+        "6": appLink(),
+      };
+    case "appointment_rescheduled":
+      return {
+        "1": doctor,
+        "2": date(payload.oldStartTime!),
+        "3": range(payload.oldStartTime!, payload.oldEndTime!),
+        "4": date(payload.newStartTime!),
+        "5": range(payload.newStartTime!, payload.newEndTime!),
+        "6": appLink(),
+      };
+    case "arrival_window":
+      return {
+        "1": range(payload.arrivalStartTime!, payload.arrivalEndTime!),
+        "2": range(payload.startTime!, payload.endTime!),
+      };
+    case "appointment_reminder":
+      return {
+        "1": doctor,
+        "2": date(payload.startTime!),
+        "3": range(payload.startTime!, payload.endTime!),
+      };
+    case "payment_receipt":
+      return {
+        "1": `₹${payload.amountRupees ?? 0}`,
+        "2": payload.providerOrderId || "your consultation order",
+      };
+    case "refund_update":
+      return {
+        "1": payload.status === "SUCCESS"
+          ? "A refund has been processed."
+          : payload.status === "FAILED"
+          ? "Your refund could not be processed."
+          : payload.status === "REQUESTED"
+          ? "A refund has been initiated."
+          : "Your refund is pending.",
+        "2": `${getAppUrl()}/patient/payments`,
+      };
+  }
+}
 
 export function renderWhatsAppMessage(name: WhatsAppMessageName, payload: WhatsAppMessagePayload): string {
   const doctor = payload.doctorName || "your practitioner";
