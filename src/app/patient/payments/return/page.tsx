@@ -6,9 +6,10 @@ import { handlePaymentSuccess } from "@/lib/payments/service";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import type { GetOrderResult } from "@/lib/payments/types";
-import { CheckCircle2, AlertTriangle, Clock, XCircle, ArrowRight, RefreshCw } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Clock, XCircle, ArrowRight } from "lucide-react";
 import { formatDateTimeIST } from "@/lib/time";
 import { formatINR } from "@/lib/money";
+import { PendingRefresh } from "./pending-refresh";
 
 interface ReturnPageProps {
   searchParams: Promise<{
@@ -23,15 +24,17 @@ export default async function PaymentReturnPage({ searchParams }: ReturnPageProp
 
   if (!orderId) {
     return (
-      <div className="container max-w-lg mx-auto py-16 px-4 text-center">
-        <AlertTriangle className="h-12 w-12 text-amber-500 mx-auto mb-4" />
-        <h1 className="text-2xl font-bold tracking-tight mb-2">Invalid Payment Return</h1>
-        <p className="text-muted-foreground mb-6">
-          No order reference was provided in the return URL.
-        </p>
-        <Link href="/patient/appointments" className={buttonVariants()}>
-          Go to Appointments
-        </Link>
+      <div className="container max-w-lg mx-auto py-16 px-4">
+        <div className="bg-card border border-border/80 rounded-2xl p-8 shadow-sm text-center">
+          <AlertTriangle className="h-12 w-12 text-amber-500 mx-auto mb-4" />
+          <h1 className="text-2xl font-bold tracking-tight mb-2">Invalid Payment Return</h1>
+          <p className="text-muted-foreground mb-6">
+            No order reference was provided in the return URL.
+          </p>
+          <Link href="/patient/appointments" className={buttonVariants()}>
+            Go to Appointments
+          </Link>
+        </div>
       </div>
     );
   }
@@ -54,16 +57,22 @@ export default async function PaymentReturnPage({ searchParams }: ReturnPageProp
   });
 
   if (!payment || payment.appointment.patient.userId !== user.id) {
+    console.warn(`[PaymentReturnPage] Order mismatch or not found: orderId=${orderId}, userId=${user.id}`);
     return (
-      <div className="container max-w-lg mx-auto py-16 px-4 text-center">
-        <XCircle className="h-12 w-12 text-destructive mx-auto mb-4" />
-        <h1 className="text-2xl font-bold tracking-tight mb-2">Order Not Found</h1>
-        <p className="text-muted-foreground mb-6">
-          We could not locate this payment order or you do not have permission to view it.
-        </p>
-        <Link href="/patient/appointments" className={buttonVariants()}>
-          Go to Appointments
-        </Link>
+      <div className="container max-w-lg mx-auto py-16 px-4">
+        <div className="bg-card border border-border/80 rounded-2xl p-8 shadow-sm text-center">
+          <XCircle className="h-12 w-12 text-destructive mx-auto mb-4" />
+          <h1 className="text-2xl font-bold tracking-tight mb-2">Payment Record Not Found</h1>
+          <p className="text-muted-foreground mb-4 text-sm leading-relaxed">
+            We could not find this payment. If money was deducted, contact support with this order id:
+          </p>
+          <div className="bg-muted p-2.5 rounded-lg font-mono text-xs text-foreground mb-6 select-all break-all border border-border/50">
+            {orderId}
+          </div>
+          <Link href="/patient/appointments" className={buttonVariants()}>
+            Go to My Appointments
+          </Link>
+        </div>
       </div>
     );
   }
@@ -75,6 +84,7 @@ export default async function PaymentReturnPage({ searchParams }: ReturnPageProp
 
   try {
     orderData = await provider.getOrder(orderId);
+    console.log(`[PaymentReturnPage] Gateway status for order ${orderId}: ${orderData.orderStatus}`);
     if (orderData.orderStatus === "PAID") {
       gatewayStatus = "PAID";
       await handlePaymentSuccess(orderId);
@@ -82,7 +92,10 @@ export default async function PaymentReturnPage({ searchParams }: ReturnPageProp
       gatewayStatus = orderData.orderStatus;
     }
   } catch (err) {
-    console.warn(`[PaymentReturnPage] Gateway poll error for ${orderId}:`, err);
+    console.warn(
+      `[PaymentReturnPage] Gateway lookup error for ${orderId}:`,
+      err instanceof Error ? err.message : err
+    );
   }
 
   const doctorName = payment.appointment.availability.doctor.user.name || "Practitioner";
@@ -141,32 +154,7 @@ export default async function PaymentReturnPage({ searchParams }: ReturnPageProp
 
   // (B) ACTIVE / PENDING VERIFICATION
   if (gatewayStatus === "ACTIVE" || gatewayStatus === "PENDING") {
-    return (
-      <div className="container max-w-lg mx-auto py-16 px-4">
-        <div className="bg-card border border-border/80 rounded-2xl p-8 shadow-sm text-center">
-          <div className="w-16 h-16 rounded-full bg-amber-500/10 text-amber-600 flex items-center justify-center mx-auto mb-6">
-            <Clock className="h-10 w-10 animate-pulse" />
-          </div>
-          <h1 className="text-2xl font-bold text-foreground mb-2">Confirming Payment...</h1>
-          <p className="text-muted-foreground text-sm mb-6">
-            We are confirming your transaction with Cashfree and your bank. This page will update automatically.
-          </p>
-
-          <meta httpEquiv="refresh" content="5" />
-
-          <div className="inline-flex items-center gap-2 text-xs text-muted-foreground mb-8">
-            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-            <span>Checking gateway status every 5 seconds...</span>
-          </div>
-
-          <div className="flex gap-3 justify-center">
-            <Link href="/patient/appointments" className={buttonVariants({ variant: "outline" })}>
-              Go to Appointments
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
+    return <PendingRefresh orderId={orderId} />;
   }
 
   // (C) EXPIRED / TERMINATED
@@ -189,7 +177,7 @@ export default async function PaymentReturnPage({ searchParams }: ReturnPageProp
     );
   }
 
-  // (D) FAILED
+  // (D) FAILED / USER_DROPPED
   return (
     <div className="container max-w-lg mx-auto py-16 px-4">
       <div className="bg-card border border-border/80 rounded-2xl p-8 shadow-sm text-center">

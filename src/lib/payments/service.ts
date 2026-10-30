@@ -159,7 +159,7 @@ export async function bookWithPaymentHold(input: BookWithPaymentInput): Promise<
   // 4. AFTER transaction: call payment provider createOrder
   const provider = getPaymentProvider();
   const appUrl = getAppUrl();
-  const returnUrl = `${appUrl}/patient/payments/return?order_id={order_id}`;
+  const returnUrl = `${appUrl}/patient/payments/return?order_id=${encodeURIComponent(orderId)}`;
   const notifyUrl = `${appUrl}/api/webhooks/cashfree`;
 
   try {
