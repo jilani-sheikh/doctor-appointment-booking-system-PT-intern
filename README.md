@@ -545,8 +545,19 @@ Add the following to your Vercel Project Settings (Settings > Environment Variab
 ### ✉️ Resend Email Setup
 
 1. Create an API Key in [Resend](https://resend.com/api-keys).
-2. For testing/sandbox mode: Use `RESEND_FROM_EMAIL="onboarding@resend.dev"`. Note that Resend sandbox only sends emails to the account owner's email address.
-3. For production: Add and verify your custom sender domain in Resend DNS settings (DKIM, SPF) and set `RESEND_FROM_EMAIL="appointments@yourdomain.com"`.
+2. **Sandbox Mode Note (`onboarding@resend.dev`):**
+   > [!IMPORTANT]
+   > In Resend sandbox mode using `RESEND_FROM_EMAIL="onboarding@resend.dev"`, Resend **strictly restricts delivery to the email address registered to your Resend account owner**. Any attempt to deliver emails to other addresses (e.g. mock test patients) will be rejected by Resend with HTTP 403 (`"You can only send testing emails to your own email address"`). The outbox stores this in `lastError` and retains the item in `PENDING` status for cron retry.
+3. **Production Mode:** Add and verify your custom sender domain in Resend DNS settings (DKIM, SPF records) and configure `RESEND_FROM_EMAIL="appointments@yourdomain.com"`. Once verified, emails deliver to any patient and doctor email address.
+4. **Triggering Email Outbox Dispatch via Cron:**
+   Queued emails and reminders are dispatched by `/api/cron/tick`. You can manually trigger or test the cron tick in PowerShell with:
+   ```powershell
+   curl.exe -X GET "https://your-domain.vercel.app/api/cron/tick" -H "Authorization: Bearer <CRON_SECRET>"
+   ```
+   Or using PowerShell's native `Invoke-RestMethod`:
+   ```powershell
+   Invoke-RestMethod -Uri "http://localhost:3000/api/cron/tick" -Headers @{ Authorization = "Bearer <CRON_SECRET>" }
+   ```
 
 ### ⏱️ External Cron Scheduler Setup (`/api/cron/tick`)
 
@@ -563,6 +574,10 @@ Setup an external cron monitor (e.g. [cron-job.org](https://cron-job.org), GitHu
 - **HTTP Headers:**
   ```text
   Authorization: Bearer <CRON_SECRET>
+  ```
+- **PowerShell Manual Trigger:**
+  ```powershell
+  curl.exe -X GET "https://your-domain.vercel.app/api/cron/tick" -H "Authorization: Bearer <CRON_SECRET>"
   ```
 - **Expected Response:** HTTP 200 with JSON summary of processed holds, refunds, and email dispatches.
 
