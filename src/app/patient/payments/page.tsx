@@ -1,5 +1,6 @@
 import { requireRole } from "@/lib/auth";
-import { Role } from "@/generated/prisma/client";
+import { Role, PaymentStatus } from "@/generated/prisma/enums";
+import type { Prisma } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { toPaymentDto } from "@/lib/serializers";
 import Link from "next/link";
@@ -22,20 +23,22 @@ export default async function PatientPaymentsPage({ searchParams }: PaymentsPage
   const pageSize = 10;
   const skip = (page - 1) * pageSize;
 
+  const whereClause: Prisma.PaymentWhereInput = {
+    appointment: {
+      patientId: user.patient?.id,
+    },
+    NOT: {
+      status: PaymentStatus.FAILED,
+      providerPaymentId: null,
+    },
+  };
+
   const [totalCount, rawPayments] = await Promise.all([
     db.payment.count({
-      where: {
-        appointment: {
-          patientId: user.patient?.id,
-        },
-      },
+      where: whereClause,
     }),
     db.payment.findMany({
-      where: {
-        appointment: {
-          patientId: user.patient?.id,
-        },
-      },
+      where: whereClause,
       include: {
         appointment: {
           include: {

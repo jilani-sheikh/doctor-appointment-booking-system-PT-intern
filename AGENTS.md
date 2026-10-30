@@ -31,7 +31,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ### Payments, Refunds & Notification Architecture
 - **Payment Provider Abstraction:** Payment operations must go through `PaymentProvider` interface in `src/lib/payments/types.ts` via `getPaymentProvider()`. Default implementation is `CashfreeProvider` with `FakePaymentProvider` fallback for testing.
 - **Rollout Modes:** Controlled by `PAYMENTS_MODE` env var: `"disabled"` (free booking bypass), `"cashfree"` (live Cashfree checkout). Free consultations (`consultationFee <= 0`) always bypass payment.
-- **Checkout Hold Invariant:** Slot checkout creates an appointment in `PENDING_PAYMENT` with `holdExpiresAt = now + 10m` while slot availability is updated to `BOOKED`. Expired holds are released by `expireStaleHolds` running in `/api/cron/tick`.
+- **Checkout Hold Invariant:** Slot checkout creates an appointment in `PENDING_PAYMENT` with `holdExpiresAt = now + 20m` (HOLD_MINUTES = 20) while slot availability is updated to `BOOKED`. Expired holds are released by `expireStaleHolds` running in `/api/cron/tick`.
 - **Paise Precision:** All currency logic operates in integer paise internally. Database stores Decimal(10,2) in rupees. Always use helpers in `src/lib/money.ts`.
 - **Refund Idempotency:** The `Refund` row (status `REQUESTED`, deterministic `providerRefundId`) MUST be inserted before invoking the gateway. Unique constraint `@@unique([paymentId, reason, appointmentId])` prevents duplicate refunds.
 - **Webhook Replay Protection & Idempotency:** Webhook requests must verify HMAC-SHA256 signature and reject timestamps deviating > 5 minutes from server clock with HTTP 401. Webhook events are idempotently tracked in `payment_webhook_events`.
