@@ -11,7 +11,7 @@ import { buttonVariants } from "@/components/ui/button";
 
 export const metadata: Metadata = {
   title: "Patient Consultations — Doctor Portal",
-  description: "Manage patient appointments, confirm bookings, and record consultation outcomes.",
+  description: "Manage patient appointments, review schedules, and record consultation outcomes.",
 };
 
 export default async function DoctorAppointmentsPage() {
@@ -105,7 +105,7 @@ export default async function DoctorAppointmentsPage() {
             Patient Consultations
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Review booked appointments, confirm pending patient requests, and update consultation outcomes.
+            Review booked consultations, track patient attendance, and record consultation outcomes.
           </p>
         </div>
 

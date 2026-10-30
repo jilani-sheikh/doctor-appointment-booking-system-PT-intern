@@ -255,48 +255,57 @@ npm run build
 
 ---
 
-## 🚦 Appointment Status Model & Transition Matrix
+## 🚦 Auto-Confirmed Bookings & Clinical Transition Matrix
 
-The consultation workflow is governed by strict, clinically validated state transitions (`src/lib/appointment-status.ts`):
+Medrella uses an **auto-confirmed booking architecture**: doctors publish and manage their own availability slots, which means **booking an available slot IS the confirmation**. Outpatient consultations are immediately created with status `CONFIRMED`. There is no doctor confirmation step, nor is there a receptionist role. Payment processing is future work and intentionally out of scope.
+
+### Abuse Guard Policy
+To prevent slot hoarding under instant auto-confirmation, the system enforces server-side limits (`src/lib/constants.ts`):
+1. **Patient Upcoming Limit:** At most **3 active upcoming consultations** (`CONFIRMED` or `CHECKED_IN` with slot in the future) across the platform.
+2. **Doctor Daily Limit:** At most **1 active consultation per doctor per day (IST)**.
 
 ```
-       ┌───────────┐
-       │  PENDING  ├──────────────┐ (Patient/Doctor/Admin Cancel)
-       └─────┬─────┘              │
-             │ (Doctor Confirm)   ▼
-       ┌─────▼─────┐       ┌─────────────┐
-       │ CONFIRMED ├──────►│  CANCELLED  │ [Terminal]
-       └──┬──────┬─┘       └─────────────┘
-          │      │ (Doctor/Admin No-Show after 15m)
-          │      ▼
-          │  ┌─────────┐
-          │  │ NO_SHOW │ [Terminal]
-          │  └─────────┘
-          │ (Patient self-check-in: start - 30m to end; or Doctor override)
-       ┌──▼────────┐
-       │CHECKED_IN ├──────────────┐ (Doctor/Admin Cancel/No-Show)
-       └──┬────────┘              │
-          │ (Doctor Start: race-safe lock)
-       ┌──▼──────────────┐        │
-       │ IN_CONSULTATION ├────────┘
-       └──┬──────────────┘
-          │ (Doctor Complete)
-       ┌──▼────────┐
-       │ COMPLETED │ [Terminal]
-       └───────────┘
+       ┌────────────────────────┐
+       │   Patient Books Slot   │
+       └───────────┬────────────┘
+                   │ (Instant Auto-Confirm)
+       ┌───────────▼────────────┐
+       │       CONFIRMED        ├─────────────────────────────┐ (Patient/Doctor/Admin Cancel)
+       └───┬────────────────┬───┘                             │
+           │                │ (Doctor/Admin No-Show after 15m)│
+           │                ▼                                 │
+           │         ┌───────────┐                            │
+           │         │  NO_SHOW  │ [Terminal]                 │
+           │         └───────────┘                            │
+           │ (Patient self-check-in: start - 30m to end;      ▼
+           │  or Doctor arrival override)              ┌─────────────┐
+       ┌───▼────────┐                                  │  CANCELLED  │ [Terminal]
+       │ CHECKED_IN ├─────────────────────────────────►│             │
+       └───┬────────┘ (Doctor/Admin Emergency Cancel)  └─────────────┘
+           │ (Doctor Start: race-safe row lock)
+       ┌───▼──────────────┐
+       │ IN_CONSULTATION  ├────────────────────────────► (Doctor/Admin Cancel/No-Show)
+       └───┬──────────────┘
+           │ (Doctor Complete)
+       ┌───▼────────┐
+       │ COMPLETED  │ [Terminal]
+       └────────────┘
+
+  [Legacy Path Only]:
+  PENDING ──► CONFIRMED (Admin / Data Migration script only; not exposed in Doctor UI)
 ```
 
 ### Transition Permission Matrix
 
 | Current Status | Target Status | Permitted Roles | Conditions & Constraints |
 |---|---|---|---|
-| `PENDING` | `CONFIRMED` | Doctor, Admin | Practitioner accepts booking request. |
-| `PENDING` | `CANCELLED` | Patient, Doctor, Admin | Patient can cancel anytime while PENDING. Slot is released. |
-| `CONFIRMED` | `CHECKED_IN` | Patient, Doctor, Admin | Patient self-check-in allowed within `[start - 30 min, end]`. Staff can check in on arrival. |
+| `PENDING` *(legacy)* | `CONFIRMED` | Admin *(Migration)* | Legacy/data migration path only. Doctors no longer confirm bookings. |
+| `PENDING` *(legacy)* | `CANCELLED` | Patient, Doctor, Admin | Legacy pending cancellation. Slot is released. |
+| `CONFIRMED` | `CHECKED_IN` | Patient, Doctor, Admin | Patient self-check-in allowed within `[start - 30 min, end]`. Doctor can mark arrived. |
 | `CONFIRMED` | `CANCELLED` | Patient, Doctor, Admin | Patient requires ≥ 2h notice unless consultation was disrupted by doctor absence. |
 | `CONFIRMED` | `NO_SHOW` | Doctor, Admin | Allowed only after `start + 15 min` grace period. |
 | `CHECKED_IN` | `IN_CONSULTATION` | Doctor | Doctor row locked `FOR UPDATE`. Doctor must have 0 current `IN_CONSULTATION` appointments. |
-| `CHECKED_IN` | `CANCELLED` | Doctor, Admin | Emergency cancellation by clinic staff. Slot released. |
+| `CHECKED_IN` | `CANCELLED` | Doctor, Admin | Emergency cancellation by doctor or clinic staff. Slot released. |
 | `CHECKED_IN` | `NO_SHOW` | Doctor, Admin | If patient leaves clinic before consultation. |
 | `IN_CONSULTATION` | `COMPLETED` | Doctor | Consultation finishes successfully. |
 | `COMPLETED` | *(None)* | — | Terminal state. Slot is historical. |
@@ -392,7 +401,7 @@ When a doctor logs time off via `/doctor/time-off`:
 ## 🔄 Dynamic Rescheduling & Automated Waitlist
 
 - **Patient Self-Service Reschedule (`/book/reschedule/[appointmentId]`):** Patients can reschedule up to **2 times**, at least **2 hours before start** (waived if disrupted by doctor absence).
-- **Atomic Slot Swap:** Inside a single database transaction, the target slot is claimed (`BOOKED`), the previous slot is freed (`releaseSlot`), and the appointment is moved to `PENDING` with `rescheduleCount` incremented.
+- **Atomic Slot Swap:** Inside a single database transaction, the target slot is claimed (`BOOKED`), the previous slot is freed (`releaseSlot`), and the appointment is reassigned while strictly preserving `CONFIRMED` status with `rescheduleCount` incremented and `waveId` cleared.
 - **Automated Waitlist:** When all slots for a doctor are booked, patients can join the waitlist with a target date range.
 - **Automated Release Trigger:** Whenever an active appointment is cancelled or rescheduled, `releaseSlot` checks `waitlist_entries` and dispatches `SLOT_AVAILABLE` notifications to waiting patients.
 
@@ -404,12 +413,12 @@ The system supports real-time notifications with unread counts and a dedicated n
 
 | Notification Type | Trigger Point | Description |
 |---|---|---|
-| `APPOINTMENT_CONFIRMED` | Doctor confirms booking | Patient informed consultation is approved. |
+| `APPOINTMENT_CONFIRMED` | Patient books consultation | Patient informed consultation is booked and confirmed (includes arrival window if covered by published wave). |
 | `APPOINTMENT_CANCELLED` | Patient / Doctor cancels | Counterpart informed consultation is cancelled. |
 | `APPOINTMENT_RESCHEDULED` | Patient / Doctor reschedules | Counterpart informed of updated slot time. |
 | `DOCTOR_ABSENCE` | Doctor schedules time off | Patients notified of disruption with free reschedule link. |
 | `SLOT_AVAILABLE` | `releaseSlot` finds waitlist match | Waitlisted patients alerted that a slot opened up. |
-| `WAVE_PUBLISHED` | Admin publishes arrival wave | Patient notified of their specific arrival window. |
+| `WAVE_PUBLISHED` | Wave published or booking assigned | Patient notified of their specific arrival window. |
 | `QUEUE_DELAY` | `startConsultation` / `endConsultation` | Triggered only if estimated delay exceeds 20 minutes (debounced via `delayNotifiedAt`, once per day). |
 
 ---
