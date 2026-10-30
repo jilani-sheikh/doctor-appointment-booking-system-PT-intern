@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { Role, AppointmentStatus, PaymentStatus, RefundStatus } from "@/generated/prisma/client";
 import { releaseSlot } from "@/lib/slots";
 import { getPaymentProvider } from "@/lib/payments/factory";
-import { handlePaymentSuccess } from "@/lib/payments/service";
+import { handlePaymentSuccess, resumeHoldPayment } from "@/lib/payments/service";
 import { rupeesToPaise } from "@/lib/money";
 import { revalidatePath } from "next/cache";
 
@@ -163,4 +163,13 @@ export async function retryRefundAction(refundId: string) {
       error: errorMsg,
     };
   }
+}
+
+/**
+ * Resumes payment for an active provisional checkout hold on behalf of a patient.
+ * Creates a fresh Cashfree order using max(holdExpiresAt, now + 18m).
+ */
+export async function resumeHoldPaymentAction(appointmentId: string) {
+  const user = await requireRole(Role.PATIENT);
+  return resumeHoldPayment(appointmentId, user.id);
 }

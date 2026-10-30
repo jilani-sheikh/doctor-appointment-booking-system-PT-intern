@@ -413,7 +413,7 @@ export function DoctorBookingSlots({
                 <p>• 100% refund if cancelled at least 24 hours prior to appointment.</p>
                 <p>• 50% refund if cancelled between 2 and 24 hours prior.</p>
                 <p>• Non-refundable within 2 hours of scheduled start time.</p>
-                <p>• Slot is held provisionally for 15 minutes to complete online checkout.</p>
+                <p>• Slot is held provisionally for 20 minutes to complete online checkout.</p>
               </div>
             </div>
           )}

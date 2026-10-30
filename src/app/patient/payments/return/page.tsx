@@ -167,7 +167,7 @@ export default async function PaymentReturnPage({ searchParams }: ReturnPageProp
           </div>
           <h1 className="text-2xl font-bold text-foreground mb-2">Payment Session Expired</h1>
           <p className="text-muted-foreground text-sm mb-6">
-            The 15-minute provisional hold for this consultation slot expired before payment was completed. The slot was released back to the schedule.
+            The 20-minute provisional hold for this consultation slot expired before payment was completed. The slot was released back to the schedule.
           </p>
           <Link href="/doctors" className={buttonVariants()}>
             Explore Available Slots

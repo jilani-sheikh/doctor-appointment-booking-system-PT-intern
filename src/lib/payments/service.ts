@@ -43,6 +43,9 @@ export interface BookWithPaymentResult {
   error?: string;
 }
 
+import { computeCashfreeOrderExpiry } from "./types";
+export { computeCashfreeOrderExpiry };
+
 /**
  * Creates an unconfirmed appointment hold (PENDING_PAYMENT) and initiates Cashfree order.
  */
@@ -162,6 +165,9 @@ export async function bookWithPaymentHold(input: BookWithPaymentInput): Promise<
   const returnUrl = `${appUrl}/patient/payments/return?order_id=${encodeURIComponent(orderId)}`;
   const notifyUrl = `${appUrl}/api/webhooks/cashfree`;
 
+  const orderNow = new Date();
+  const orderExpiryTime = computeCashfreeOrderExpiry(holdExpiresAt, orderNow);
+
   try {
     const orderRes = await provider.createOrder({
       orderId,
@@ -175,15 +181,16 @@ export async function bookWithPaymentHold(input: BookWithPaymentInput): Promise<
       },
       returnUrl,
       notifyUrl,
-      expiresAt: holdExpiresAt,
+      expiresAt: orderExpiryTime,
     });
 
-    // Update payment record with paymentSessionId
+    // Update payment record with paymentSessionId and final order expiry
     await db.payment.update({
       where: { id: paymentId },
       data: {
         paymentSessionId: orderRes.paymentSessionId,
         providerPaymentId: orderRes.cfOrderId,
+        expiresAt: orderExpiryTime,
       },
     });
 
@@ -227,6 +234,101 @@ export async function bookWithPaymentHold(input: BookWithPaymentInput): Promise<
       success: false,
       error: "Online payment initiation failed. Please try again or choose another slot.",
     };
+  }
+}
+
+/**
+ * Resumes checkout for an active provisional hold by generating a fresh Cashfree order
+ * using the exact same order_expiry_time rules.
+ */
+export async function resumeHoldPayment(appointmentId: string, userId: string): Promise<{
+  success: boolean;
+  paymentSessionId?: string;
+  orderId?: string;
+  error?: string;
+}> {
+  const appointment = await db.appointment.findUnique({
+    where: { id: appointmentId },
+    include: {
+      patient: { include: { user: true } },
+      availability: {
+        include: {
+          doctor: {
+            include: { user: { select: { name: true } } },
+          },
+        },
+      },
+    },
+  });
+
+  if (!appointment || appointment.patient.userId !== userId) {
+    return { success: false, error: "Consultation hold not found or unauthorized." };
+  }
+
+  if (appointment.status !== AppointmentStatus.PENDING_PAYMENT) {
+    return { success: false, error: "This appointment is no longer pending payment." };
+  }
+
+  const now = new Date();
+  if (!appointment.holdExpiresAt || appointment.holdExpiresAt <= now) {
+    await expireStaleHolds(1);
+    return { success: false, error: "Your 20-minute provisional hold has expired. Please select another slot." };
+  }
+
+  const doctor = appointment.availability.doctor;
+  const feeRupees = Number(doctor.consultationFee);
+  const feePaise = rupeesToPaise(feeRupees);
+
+  // Generate a fresh unique order ID
+  const orderId = `order_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const provider = getPaymentProvider();
+  const appUrl = getAppUrl();
+  const returnUrl = `${appUrl}/patient/payments/return?order_id=${encodeURIComponent(orderId)}`;
+  const notifyUrl = `${appUrl}/api/webhooks/cashfree`;
+
+  const orderNow = new Date();
+  const orderExpiryTime = computeCashfreeOrderExpiry(appointment.holdExpiresAt, orderNow);
+  const normalizedPhone = normalizeIndianPhoneNumber(appointment.patient.phone) || "9999999999";
+
+  try {
+    const orderRes = await provider.createOrder({
+      orderId,
+      amountPaise: feePaise,
+      currency: "INR",
+      customer: {
+        customerId: userId,
+        phone: normalizedPhone,
+        name: appointment.patient.user.name || "Patient",
+        email: appointment.patient.user.email || undefined,
+      },
+      returnUrl,
+      notifyUrl,
+      expiresAt: orderExpiryTime,
+    });
+
+    // Record the new Payment row in CREATED status
+    await db.payment.create({
+      data: {
+        appointmentId: appointment.id,
+        provider: "cashfree",
+        providerOrderId: orderId,
+        paymentSessionId: orderRes.paymentSessionId,
+        amount: new Prisma.Decimal(paiseToDecimalString(feePaise)),
+        currency: "INR",
+        status: PaymentStatus.CREATED,
+        expiresAt: orderExpiryTime,
+      },
+    });
+
+    return {
+      success: true,
+      paymentSessionId: orderRes.paymentSessionId,
+      orderId,
+    };
+  } catch (err: unknown) {
+    console.error("[resumeHoldPayment] Cashfree createOrder failed:", err);
+    const msg = err instanceof Error ? err.message : "Failed to initiate payment gateway session.";
+    return { success: false, error: msg };
   }
 }
 
@@ -676,7 +778,7 @@ export async function expireStaleHolds(limit = 25): Promise<{ expiredCount: numb
           template: "payment_failed_hold",
           payload: {
             doctorName: appt.availability.doctor.user.name || "Doctor",
-            reason: "Hold expired after 15 minutes without payment completion",
+            reason: "Hold expired after 20 minutes without payment completion",
           },
           dedupeKey: `email:hold_expired:${appt.id}`,
         });

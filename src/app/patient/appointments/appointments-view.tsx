@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cancelPatientAppointmentAction } from "@/lib/actions/appointments";
-import { cancelHoldAction } from "@/lib/actions/payments";
+import { cancelHoldAction, resumeHoldPaymentAction } from "@/lib/actions/payments";
 import { patientCheckInAction } from "@/lib/actions/queue";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -99,19 +99,20 @@ export function AppointmentsView({
   };
 
   const handleResumePayment = async (appt: SerializedPatientAppointment) => {
-    if (!appt.paymentSessionId) {
-      toast.error("Checkout session has expired. Please reserve an available slot.");
-      return;
-    }
-
-    toast.loading("Resuming secure payment checkout...", { id: "checkout" });
+    toast.loading("Preparing secure payment checkout...", { id: "checkout" });
     try {
+      const res = await resumeHoldPaymentAction(appt.id);
+      if (!res.success || !res.paymentSessionId) {
+        toast.error(res.error || "Checkout session has expired. Please reserve an available slot.", { id: "checkout" });
+        return;
+      }
+
       const { load } = await import("@cashfreepayments/cashfree-js");
       const cashfree = await load({
         mode: process.env.NEXT_PUBLIC_CASHFREE_ENV === "production" ? "production" : "sandbox",
       });
       await cashfree.checkout({
-        paymentSessionId: appt.paymentSessionId,
+        paymentSessionId: res.paymentSessionId,
         redirectTarget: "_self",
       });
     } catch (err: unknown) {
@@ -206,7 +207,7 @@ export function AppointmentsView({
                       <Clock className="h-4 w-4 text-amber-600 shrink-0" />
                       <span>
                         <strong>Provisional Hold Active:</strong> Reserved until{" "}
-                        {appt.holdExpiresAt ? formatTimeIST(appt.holdExpiresAt) : "15 minutes"}{" "}
+                        {appt.holdExpiresAt ? formatTimeIST(appt.holdExpiresAt) : "20 minutes"}{" "}
                         (IST). Complete payment to secure this slot.
                       </span>
                     </div>

@@ -21,9 +21,19 @@ export const MAX_SIMULTANEOUS_HOLDS_PER_PATIENT = 2;
 
 /**
  * Hold duration in minutes for an unconfirmed appointment pending online payment.
- * Must be >= Cashfree minimum order expiry (5 minutes). Default: 15 minutes.
+ * Default: 20 minutes.
  */
-export const HOLD_MINUTES = 15;
+export const HOLD_MINUTES = 20;
+
+/**
+ * Cashfree minimum order expiry requirement in minutes (15 minutes).
+ */
+export const CASHFREE_MIN_EXPIRY_MINUTES = 15;
+
+/**
+ * Safety buffer in minutes added to order expiry to protect against clock skew / network delay.
+ */
+export const CASHFREE_EXPIRY_SAFETY_MINUTES = 3;
 
 /**
  * Cashfree default API version string.

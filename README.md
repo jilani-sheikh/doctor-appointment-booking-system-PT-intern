@@ -562,7 +562,7 @@ Add the following to your Vercel Project Settings (Settings > Environment Variab
 ### ⏱️ External Cron Scheduler Setup (`/api/cron/tick`)
 
 Medrella's background worker endpoint `/api/cron/tick` handles:
-1. Expiring stale checkout holds (`PENDING_PAYMENT` > 10m old) and releasing the slots.
+1. Expiring stale checkout holds (`PENDING_PAYMENT` > 20m old, controlled by `HOLD_MINUTES = 20`) and releasing the slots.
 2. Re-checking gateway status for pending payments.
 3. Polling and synchronizing pending refunds.
 4. Dispatching due transactional email notifications and reminders from the outbox table (`notification_deliveries`).

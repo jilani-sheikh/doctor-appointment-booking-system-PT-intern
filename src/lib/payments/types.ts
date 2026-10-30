@@ -1,3 +1,5 @@
+import { CASHFREE_MIN_EXPIRY_MINUTES, CASHFREE_EXPIRY_SAFETY_MINUTES } from "@/lib/constants";
+
 export interface CustomerDetails {
   customerId: string;
   phone: string;
@@ -122,4 +124,17 @@ export function deriveWebhookDedupeKey(
   const normRef = (referenceId || "no_ref").trim();
   const normStatus = (status || "no_status").trim();
   return `${normProvider}:${normEvent}:${normOrder}:${normRef}:${normStatus}`;
+}
+
+/**
+ * Computes Cashfree order_expiry_time.
+ * Must be at least (CASHFREE_MIN_EXPIRY_MINUTES + CASHFREE_EXPIRY_SAFETY_MINUTES) = 18 minutes
+ * from the moment createOrder is invoked, or holdExpiresAt, whichever is later.
+ * Formatted as ISO 8601 UTC.
+ */
+export function computeCashfreeOrderExpiry(holdExpiresAt: Date, orderNow: Date = new Date()): Date {
+  const minGatewayExpiry = new Date(
+    orderNow.getTime() + (CASHFREE_MIN_EXPIRY_MINUTES + CASHFREE_EXPIRY_SAFETY_MINUTES) * 60 * 1000
+  );
+  return holdExpiresAt.getTime() > minGatewayExpiry.getTime() ? holdExpiresAt : minGatewayExpiry;
 }
