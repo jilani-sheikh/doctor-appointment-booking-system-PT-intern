@@ -15,7 +15,7 @@ import {
 } from "@/lib/appointment-status";
 import { releaseSlot, notifyWaitlistAfterSlotRelease } from "@/lib/slots";
 import { createNotification } from "@/lib/notifications";
-import { enqueueEmail } from "@/lib/notifications/index";
+import { enqueuePatientNotifications } from "@/lib/notifications/index";
 import { syncAppointmentReminders } from "@/lib/notifications/reminders";
 import { requestRefund } from "@/lib/payments/service";
 import { formatSlotDateTimeRangeIST } from "@/lib/time";
@@ -146,7 +146,7 @@ export async function updateDoctorAppointmentStatusAction(
       });
 
       // Outbox email
-      await enqueueEmail(db, {
+      await enqueuePatientNotifications(db, {
         userId: appointment.patient.userId,
         appointmentId,
         template: "appointment_cancelled",
@@ -156,8 +156,11 @@ export async function updateDoctorAppointmentStatusAction(
           endTime: appointment.availability.endTime.toISOString(),
           cancelledBy: "DOCTOR",
           refundSummary,
+          refundInitiated: Boolean(refundSummary),
         },
         dedupeKey: `email:doctor_cancelled:${appointmentId}`,
+        whatsappTemplate: "appointment_cancelled",
+        whatsappDedupeKey: `whatsapp:appointment_cancelled:${appointmentId}:doctor`,
       });
 
       // Notify waitlist if slot became available

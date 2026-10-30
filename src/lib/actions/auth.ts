@@ -14,6 +14,7 @@ import {
 } from "@/lib/validations/auth";
 import { Role, DoctorStatus, Prisma } from "@/generated/prisma/client";
 import { AuthError } from "next-auth";
+import { z } from "zod";
 
 /**
  * Server Action to trigger Google OAuth sign-in.
@@ -201,6 +202,8 @@ export async function completeOnboardingAction(data: OnboardingInput) {
               dateOfBirth: new Date(validated.dateOfBirth),
               gender: validated.gender,
               phone: validated.phone,
+              whatsappOptIn: validated.whatsappOptIn,
+              whatsappOptInAt: validated.whatsappOptIn ? new Date() : null,
             },
           },
         },
@@ -260,4 +263,27 @@ export async function completeOnboardingAction(data: OnboardingInput) {
       error: "Failed to complete onboarding. Please try again.",
     };
   }
+}
+
+export async function updateWhatsAppOptInAction(input: { whatsappOptIn: boolean }) {
+  const user = await getCurrentUser();
+  if (!user || user.role !== Role.PATIENT || !user.patient) {
+    return { success: false, error: "Patient access is required." };
+  }
+  const parsed = z.object({ whatsappOptIn: z.boolean() }).safeParse(input);
+  if (!parsed.success) return { success: false, error: "Invalid WhatsApp preference." };
+  await db.patient.update({
+    where: { userId: user.id },
+    data: {
+      whatsappOptIn: parsed.data.whatsappOptIn,
+      whatsappOptInAt: parsed.data.whatsappOptIn ? new Date() : null,
+    },
+  });
+  if (!parsed.data.whatsappOptIn) {
+    await db.notificationDelivery.updateMany({
+      where: { userId: user.id, channel: "WHATSAPP", status: "PENDING" },
+      data: { status: "CANCELLED", lastError: "WhatsApp opted out by patient" },
+    });
+  }
+  return { success: true };
 }

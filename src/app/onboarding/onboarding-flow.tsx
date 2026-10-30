@@ -24,6 +24,7 @@ export function OnboardingFlow({ userName }: OnboardingFlowProps) {
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [gender, setGender] = useState<string>("Prefer not to say");
   const [phone, setPhone] = useState("");
+  const [whatsappOptIn, setWhatsappOptIn] = useState(false);
 
   // Doctor Form State
   const [specialization, setSpecialization] = useState<string>(SPECIALIZATIONS[0]);
@@ -100,6 +101,7 @@ export function OnboardingFlow({ userName }: OnboardingFlowProps) {
           dateOfBirth,
           gender: gender as (typeof GENDERS)[number],
           phone: phone.trim(),
+          whatsappOptIn,
         });
 
         if (!res.success) {
@@ -290,8 +292,18 @@ export function OnboardingFlow({ userName }: OnboardingFlowProps) {
                       className="w-full px-3 py-2 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary disabled:opacity-50"
                     />
                     <p className="text-[11px] text-muted-foreground">
-                      Used for appointment SMS updates and reminders.
+                      Used for appointment updates and reminders.
                     </p>
+                    <label className="flex items-start gap-2 pt-2 text-sm text-foreground">
+                      <input
+                        type="checkbox"
+                        checked={whatsappOptIn}
+                        onChange={(e) => setWhatsappOptIn(e.target.checked)}
+                        disabled={isPending}
+                        className="mt-1"
+                      />
+                      <span>Send me appointment updates on WhatsApp (to this phone number)</span>
+                    </label>
                     {fieldErrors.phone && (
                       <p className="text-xs text-destructive mt-1">{fieldErrors.phone}</p>
                     )}

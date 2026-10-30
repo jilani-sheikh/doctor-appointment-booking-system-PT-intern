@@ -162,12 +162,14 @@ model VerificationToken {
 }
 
 model Patient {
-  id          String    @id @default(cuid())
-  userId      String    @unique @map("user_id")
-  dateOfBirth DateTime? @map("date_of_birth")
-  gender      String?
-  phone       String?
-  createdAt   DateTime  @default(now()) @map("created_at")
+  id            String    @id @default(cuid())
+  userId        String    @unique @map("user_id")
+  dateOfBirth   DateTime? @map("date_of_birth")
+  gender        String?
+  phone         String?
+  whatsappOptIn Boolean   @default(false) @map("whatsapp_opt_in")
+  whatsappOptInAt DateTime? @map("whatsapp_opt_in_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
 
   user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   appointments    Appointment[]

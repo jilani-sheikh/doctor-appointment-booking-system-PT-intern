@@ -13,7 +13,7 @@ import {
 import { revalidatePath } from "next/cache";
 import { releaseSlot } from "@/lib/slots";
 import { createNotification } from "@/lib/notifications";
-import { enqueueEmail } from "@/lib/notifications/index";
+import { enqueueEmail, enqueuePatientNotifications } from "@/lib/notifications/index";
 import { syncAppointmentReminders } from "@/lib/notifications/reminders";
 import { getPaymentProvider } from "./factory";
 import { calculateRefundPolicy } from "@/lib/refund-policy";
@@ -460,7 +460,7 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
     });
 
     // Outbox email: booking confirmed
-    await enqueueEmail(db, {
+    await enqueuePatientNotifications(db, {
       userId: appointment.patient.userId,
       appointmentId,
       template: "booking_confirmed",
@@ -472,12 +472,14 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
         arrivalWindow: assignedWaveArrivalWindow,
       },
       dedupeKey: `email:booking_confirmed:${appointmentId}`,
+      whatsappTemplate: "appointment_confirmed",
+      whatsappDedupeKey: `whatsapp:appointment_confirmed:${appointmentId}`,
     });
 
-    // Outbox email: payment receipt (if payment row exists and was paid)
+    // Outbox email and WhatsApp receipt (if payment row exists and was paid)
     const paidPayment = appointment.payments[0];
     if (paidPayment) {
-      await enqueueEmail(db, {
+      await enqueuePatientNotifications(db, {
         userId: appointment.patient.userId,
         appointmentId,
         template: "payment_receipt",
@@ -490,6 +492,8 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
           paymentId: paidPayment.id,
         },
         dedupeKey: `email:payment_receipt:${paidPayment.id}`,
+        whatsappTemplate: "payment_receipt",
+        whatsappDedupeKey: `whatsapp:payment_receipt:${paidPayment.id}`,
       });
     }
 
@@ -960,7 +964,7 @@ export async function requestRefund(params: RequestRefundParams): Promise<Reques
 
     // Enqueue refund email
     if (payment.appointment.patient.user.email) {
-      await enqueueEmail(db, {
+      await enqueuePatientNotifications(db, {
         userId: payment.appointment.patient.userId,
         appointmentId,
         template: "refund_status",
@@ -971,6 +975,8 @@ export async function requestRefund(params: RequestRefundParams): Promise<Reques
           providerRefundId,
         },
         dedupeKey: `email:refund_status:${refundRecordId}:${finalStatus}`,
+        whatsappTemplate: "refund_update",
+        whatsappDedupeKey: `whatsapp:refund_update:${refundRecordId}:${finalStatus}`,
       });
     }
 

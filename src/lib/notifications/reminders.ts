@@ -1,5 +1,5 @@
 import { AppointmentStatus, DeliveryStatus, NotificationChannel, type Prisma } from "@/generated/prisma/client";
-import { getReminderOffsetsMinutes } from "@/lib/env";
+import { getReminderOffsetsMinutes, getWhatsAppMode } from "@/lib/env";
 
 export interface SyncRemindersParams {
   appointmentId: string;
@@ -31,7 +31,7 @@ export async function syncAppointmentReminders(
     const res = await tx.notificationDelivery.updateMany({
       where: {
         appointmentId,
-        template: "reminder",
+        template: { in: ["reminder", "appointment_reminder"] },
         status: DeliveryStatus.PENDING,
       },
       data: {
@@ -46,7 +46,7 @@ export async function syncAppointmentReminders(
     const res = await tx.notificationDelivery.updateMany({
       where: {
         appointmentId,
-        template: "reminder",
+        template: { in: ["reminder", "appointment_reminder"] },
         status: DeliveryStatus.PENDING,
       },
       data: {
@@ -60,7 +60,7 @@ export async function syncAppointmentReminders(
   await tx.notificationDelivery.updateMany({
     where: {
       appointmentId,
-      template: "reminder",
+      template: { in: ["reminder", "appointment_reminder"] },
       status: DeliveryStatus.PENDING,
     },
     data: {
@@ -70,6 +70,14 @@ export async function syncAppointmentReminders(
 
   const offsets = getReminderOffsetsMinutes();
   let scheduledCount = 0;
+  const patient = "user" in tx && tx.user
+    ? await tx.user.findUnique({
+        where: { id: userId },
+        select: { role: true, patient: { select: { whatsappOptIn: true } } },
+      })
+    : null;
+  const shouldScheduleWhatsApp =
+    getWhatsAppMode() === "twilio" && patient?.role === "PATIENT" && patient.patient?.whatsappOptIn;
 
   for (const offset of offsets) {
     const scheduledFor = new Date(slotStartTime.getTime() - offset * 60 * 1000);
@@ -99,6 +107,28 @@ export async function syncAppointmentReminders(
           status: DeliveryStatus.PENDING,
         },
       });
+
+      if (shouldScheduleWhatsApp) {
+        await tx.notificationDelivery.upsert({
+          where: { dedupeKey: `whatsapp:appointment_reminder:${appointmentId}:${offset}:${slotStartTime.getTime()}` },
+          create: {
+            userId,
+            appointmentId,
+            channel: NotificationChannel.WHATSAPP,
+            template: "appointment_reminder",
+            payload: {
+              doctorName: "Practitioner",
+              startTime: slotStartTime.toISOString(),
+              ...(params.slotEndTime ? { endTime: params.slotEndTime.toISOString() } : {}),
+              offsetMinutes: offset,
+            },
+            dedupeKey: `whatsapp:appointment_reminder:${appointmentId}:${offset}:${slotStartTime.getTime()}`,
+            scheduledFor,
+            status: DeliveryStatus.PENDING,
+          },
+          update: { scheduledFor, status: DeliveryStatus.PENDING },
+        });
+      }
 
       scheduledCount++;
     }

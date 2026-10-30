@@ -10,6 +10,7 @@ import { Calendar, User, Clock, ArrowRight, Activity, AlertCircle } from "lucide
 import { formatDateIST, formatTimeIST, formatSlotRange, formatSlotDateTimeRangeIST, getTodayISTDateString, getISTDateString } from "@/lib/time";
 import { calculateQueueEstimates, EMERGENCY_DISCLAIMER, type QueueAppointmentItem } from "@/lib/queue";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
+import { WhatsAppPreference } from "./whatsapp-preference";
 
 export const metadata: Metadata = {
   title: "Patient Dashboard — Medrella",
@@ -291,6 +292,7 @@ export default async function PatientDashboardPage() {
               <p className="text-xs text-muted-foreground">Gender</p>
               <p className="font-medium text-foreground">{patient?.gender ?? "Not specified"}</p>
             </div>
+            <WhatsAppPreference phone={patient?.phone} optedIn={patient?.whatsappOptIn ?? false} />
           </CardContent>
         </Card>
 

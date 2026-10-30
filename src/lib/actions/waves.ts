@@ -24,6 +24,7 @@ import {
   type DeleteDoctorDraftWaveInput,
 } from "@/lib/validations/waves";
 import { revalidatePath } from "next/cache";
+import { enqueuePatientNotifications } from "@/lib/notifications/index";
 
 /**
  * Updates a doctor's default wave scheduling preferences.
@@ -118,6 +119,7 @@ export async function generateDoctorWavesAction(
         // 2. Fetch fresh doctor settings
         const currentDoc = await tx.doctor.findUniqueOrThrow({
           where: { id: doctor.id },
+          include: { user: { select: { name: true } } },
         });
 
         const shouldPublish = publishNow || currentDoc.autoPublishWaves;
@@ -263,6 +265,24 @@ export async function generateDoctorWavesAction(
                   },
                 });
               }
+              const assigned = eligibleAppointments.find((appt) => appt.patient.userId === patientUserId);
+              if (assigned) {
+                await enqueuePatientNotifications(tx, {
+                  userId: patientUserId,
+                  appointmentId: assigned.id,
+                  template: "booking_confirmed",
+                  payload: {
+                    doctorName: currentDoc.user.name ?? "Practitioner",
+                    startTime: assigned.availability.startTime.toISOString(),
+                    endTime: assigned.availability.endTime.toISOString(),
+                    arrivalStartTime: new Date(w.windowStart).toISOString(),
+                    arrivalEndTime: new Date(w.windowEnd).toISOString(),
+                  },
+                  dedupeKey: `email:arrival_window:${assigned.id}:${w.id}`,
+                  whatsappTemplate: "arrival_window",
+                  whatsappDedupeKey: `whatsapp:arrival_window:${assigned.id}:${w.id}`,
+                });
+              }
             }
           }
         }
@@ -381,7 +401,7 @@ export async function publishDoctorWaveAction(input: PublishDoctorWaveInput) {
     where: { id: parsed.data.waveId },
     include: {
       appointments: {
-        include: { patient: { select: { userId: true } } },
+        include: { patient: { select: { userId: true } }, availability: true },
       },
     },
   });
@@ -428,6 +448,21 @@ export async function publishDoctorWaveAction(input: PublishDoctorWaveInput) {
           },
         });
       }
+      await enqueuePatientNotifications(db, {
+        userId: appt.patient.userId,
+        appointmentId: appt.id,
+        template: "booking_confirmed",
+        payload: {
+          doctorName: "Practitioner",
+          startTime: appt.availability.startTime.toISOString(),
+          endTime: appt.availability.endTime.toISOString(),
+          arrivalStartTime: wave.windowStart.toISOString(),
+          arrivalEndTime: wave.windowEnd.toISOString(),
+        },
+        dedupeKey: `email:arrival_window:${appt.id}:${wave.id}`,
+        whatsappTemplate: "arrival_window",
+        whatsappDedupeKey: `whatsapp:arrival_window:${appt.id}:${wave.id}`,
+      });
     }
 
     revalidatePath("/doctor/waves");

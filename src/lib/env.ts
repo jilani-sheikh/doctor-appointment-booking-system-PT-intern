@@ -59,6 +59,12 @@ const envSchema = z.object({
   EMAIL_FROM: z.string().optional(),
   CRON_SECRET: z.string().optional(),
   REMINDER_OFFSETS_MINUTES: z.string().optional(),
+  WHATSAPP_PROVIDER: z.enum(["twilio"]).default("twilio"),
+  WHATSAPP_MODE: z.enum(["disabled", "twilio"]).default("disabled"),
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_WHATSAPP_FROM: z.string().optional(),
+  WHATSAPP_DEFAULT_COUNTRY_CODE: z.string().default("91"),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -197,6 +203,38 @@ export function getPaymentsMode(): "disabled" | "cashfree" {
 export function getAppUrl(): string {
   const raw = process.env.APP_URL?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim() || "http://localhost:3000";
   return raw.replace(/\/+$/, "");
+}
+
+export function getWhatsAppMode(): "disabled" | "twilio" {
+  return process.env.WHATSAPP_MODE?.trim().toLowerCase() === "twilio" ? "twilio" : "disabled";
+}
+
+export function getWhatsAppProvider(): "twilio" {
+  return "twilio";
+}
+
+function requiredWhatsAppVariable(name: "TWILIO_ACCOUNT_SID" | "TWILIO_AUTH_TOKEN" | "TWILIO_WHATSAPP_FROM"): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`[Medrella Config Error] Missing required environment variable: ${name}. Configure ${name} to enable WhatsApp notifications.`);
+  }
+  return value;
+}
+
+export function getTwilioConfig() {
+  return {
+    accountSid: requiredWhatsAppVariable("TWILIO_ACCOUNT_SID"),
+    authToken: requiredWhatsAppVariable("TWILIO_AUTH_TOKEN"),
+    from: requiredWhatsAppVariable("TWILIO_WHATSAPP_FROM"),
+  };
+}
+
+export function getWhatsAppDefaultCountryCode(): string {
+  const value = process.env.WHATSAPP_DEFAULT_COUNTRY_CODE?.trim() || "91";
+  if (!/^\d{1,3}$/.test(value)) {
+    throw new Error("[Medrella Config Error] Invalid WHATSAPP_DEFAULT_COUNTRY_CODE. Configure a numeric country code.");
+  }
+  return value;
 }
 
 /**

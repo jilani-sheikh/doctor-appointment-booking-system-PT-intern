@@ -13,7 +13,7 @@ import {
   type RescheduleAppointmentInput,
   type WaitlistEntryInput,
 } from "@/lib/validations/reschedule";
-import { enqueueEmail } from "@/lib/notifications/index";
+import { enqueuePatientNotifications } from "@/lib/notifications/index";
 import { syncAppointmentReminders } from "@/lib/notifications/reminders";
 import { revalidatePath } from "next/cache";
 
@@ -151,7 +151,7 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
     });
 
     // Enqueue outbox email
-    await enqueueEmail(db, {
+    await enqueuePatientNotifications(db, {
       userId: user.id,
       appointmentId,
       template: "appointment_rescheduled",
@@ -163,6 +163,8 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
         newEndTime: newSlot.endTime.toISOString(),
       },
       dedupeKey: `email:rescheduled:${appointmentId}:${newSlot.startTime.getTime()}`,
+      whatsappTemplate: "appointment_rescheduled",
+      whatsappDedupeKey: `whatsapp:appointment_rescheduled:${appointmentId}:${newSlot.startTime.getTime()}`,
     });
 
     // Notify doctor

@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
 import { DeliveryStatus, NotificationChannel, AppointmentStatus, type Prisma } from "@/generated/prisma/client";
 import { sendEmail } from "@/lib/email/client";
+import { getWhatsAppMode } from "@/lib/env";
+import { sendWhatsAppMessage } from "@/lib/notifications/whatsapp/channel";
 import {
   renderBookingConfirmedEmail,
   renderPaymentReceiptEmail,
@@ -59,6 +61,58 @@ export interface EnqueueEmailParams {
   scheduledFor?: Date;
 }
 
+export interface EnqueuePatientNotificationParams extends Omit<EnqueueEmailParams, "dedupeKey"> {
+  dedupeKey: string;
+  whatsappTemplate?: "appointment_confirmed" | "appointment_cancelled" | "appointment_rescheduled" | "arrival_window" | "appointment_reminder" | "payment_receipt" | "refund_update";
+  whatsappDedupeKey?: string;
+}
+
+/**
+ * Enqueues the patient email and WhatsApp rows independently. A provider or database
+ * failure in one channel must never prevent the other channel or the caller.
+ */
+export async function enqueuePatientNotifications(
+  txOrDb: Prisma.TransactionClient | typeof db,
+  params: EnqueuePatientNotificationParams
+) {
+  let email;
+  try {
+    email = await enqueueEmail(txOrDb, params);
+  } catch (error) {
+    console.error("[Outbox] Patient email enqueue failed:", error);
+  }
+
+  let whatsapp;
+  if (getWhatsAppMode() === "twilio" && params.whatsappTemplate) {
+    try {
+      const recipient = await txOrDb.user.findUnique({
+        where: { id: params.userId },
+        select: { role: true, patient: { select: { whatsappOptIn: true } } },
+      });
+      if (recipient?.role?.toString() === "PATIENT" && recipient.patient?.whatsappOptIn) {
+        whatsapp = await txOrDb.notificationDelivery.upsert({
+          where: { dedupeKey: params.whatsappDedupeKey ?? `whatsapp:${params.whatsappTemplate}:${params.appointmentId ?? "none"}` },
+          create: {
+            userId: params.userId,
+            appointmentId: params.appointmentId ?? null,
+            channel: NotificationChannel.WHATSAPP,
+            template: params.whatsappTemplate,
+            payload: params.payload as Prisma.InputJsonValue,
+            dedupeKey: params.whatsappDedupeKey ?? `whatsapp:${params.whatsappTemplate}:${params.appointmentId ?? "none"}`,
+            scheduledFor: params.scheduledFor ?? new Date(),
+            status: DeliveryStatus.PENDING,
+          },
+          update: {},
+        });
+      }
+    } catch (error) {
+      console.error("[Outbox] Patient WhatsApp enqueue failed:", error);
+    }
+  }
+
+  return { email, whatsapp };
+}
+
 /**
  * Enqueues an email into the outbox table (NotificationDelivery).
  * Uses unique dedupeKey to ensure retries and duplicate events are strictly idempotent.
@@ -109,18 +163,87 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
           id: true,
           email: true,
           name: true,
+          role: true,
           emailRemindersEnabled: true,
+          patient: { select: { phone: true, whatsappOptIn: true } },
         },
       },
       appointment: {
         include: {
-          availability: true,
+          availability: { include: { doctor: { include: { user: { select: { name: true } } } } } },
         },
       },
     },
   });
 
   if (!delivery) return false;
+
+  if (delivery.channel === NotificationChannel.WHATSAPP) {
+    if (delivery.user?.role?.toString() !== "PATIENT") {
+      await db.notificationDelivery.update({ where: { id: deliveryId }, data: { status: DeliveryStatus.SKIPPED, lastError: "WhatsApp is available only to patients" } });
+      return true;
+    }
+    if (!delivery.user.patient?.whatsappOptIn) {
+      await db.notificationDelivery.update({ where: { id: deliveryId }, data: { status: DeliveryStatus.CANCELLED, lastError: "WhatsApp opted out by patient" } });
+      return true;
+    }
+    if (
+      (delivery.template === "reminder" || delivery.template === "appointment_reminder") &&
+      (!delivery.appointment ||
+        delivery.appointment.status !== AppointmentStatus.CONFIRMED ||
+        delivery.appointment.availability.startTime <= new Date())
+    ) {
+      await db.notificationDelivery.update({ where: { id: deliveryId }, data: { status: DeliveryStatus.SKIPPED, lastError: "Appointment not active or slot expired" } });
+      return true;
+    }
+    const whatsappPayload = {
+      ...(delivery.payload as Parameters<typeof sendWhatsAppMessage>[1]),
+      ...(delivery.appointment?.availability.doctor.user.name
+        ? { doctorName: delivery.appointment.availability.doctor.user.name }
+        : {}),
+    };
+    let result;
+    try {
+      result = await sendWhatsAppMessage(
+        delivery.template as Parameters<typeof sendWhatsAppMessage>[0],
+        whatsappPayload,
+        delivery.user.patient.phone
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "WhatsApp configuration error";
+      console.error(`[WhatsApp] delivery=${deliveryId} message=${delivery.template} status=0 code=none configuration failure: ${message}`);
+      await db.notificationDelivery.update({
+        where: { id: deliveryId },
+        data: { status: DeliveryStatus.FAILED, attempts: delivery.attempts + 1, lastError: message, lockedAt: null },
+      });
+      return false;
+    }
+    if (result.success) {
+      await db.notificationDelivery.update({ where: { id: deliveryId }, data: { status: DeliveryStatus.SENT, sentAt: new Date(), lockedAt: null } });
+      return true;
+    }
+    const attempts = delivery.attempts + 1;
+    const finalFailure = !result.retryable || attempts >= 5;
+    if (result.errorCode) {
+      console.warn(`[WhatsApp] delivery=${deliveryId} message=${delivery.template} status=${result.httpStatus} code=${result.errorCode}`);
+    } else if (result.error === "invalid phone") {
+      await db.notificationDelivery.update({ where: { id: deliveryId }, data: { status: DeliveryStatus.SKIPPED, lastError: "invalid phone", lockedAt: null } });
+      return true;
+    } else {
+      console.warn(`[WhatsApp] delivery=${deliveryId} message=${delivery.template} status=${result.httpStatus} code=none`);
+    }
+    await db.notificationDelivery.update({
+      where: { id: deliveryId },
+      data: {
+        status: finalFailure ? DeliveryStatus.FAILED : DeliveryStatus.PENDING,
+        attempts,
+        scheduledFor: finalFailure ? delivery.scheduledFor : new Date(Date.now() + Math.min(60, 2 ** attempts) * 60 * 1000),
+        lastError: result.error || "WhatsApp delivery failed",
+        lockedAt: null,
+      },
+    });
+    return false;
+  }
 
   // 1. If recipient has no email, mark SKIPPED
   if (!delivery.user?.email) {
@@ -306,6 +429,7 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
       data: {
         status: finalFailure ? DeliveryStatus.FAILED : DeliveryStatus.PENDING,
         attempts,
+        scheduledFor: finalFailure ? delivery.scheduledFor : new Date(Date.now() + Math.min(60, 2 ** attempts) * 60 * 1000),
         lastError: sendResult.error || "Delivery failed",
         lockedAt: null,
       },

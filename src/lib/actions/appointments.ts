@@ -18,7 +18,7 @@ import {
 import { canPatientCancel } from "@/lib/appointment-status";
 import { releaseSlot, notifyWaitlistAfterSlotRelease } from "@/lib/slots";
 import { createNotification } from "@/lib/notifications";
-import { enqueueEmail } from "@/lib/notifications/index";
+import { enqueuePatientNotifications } from "@/lib/notifications/index";
 import { syncAppointmentReminders } from "@/lib/notifications/reminders";
 import { formatDateIST, formatSlotDateTimeRangeIST, getISTDateString, getISTDayRangeUTC } from "@/lib/time";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
@@ -312,7 +312,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
         href: "/doctor/queue",
       });
 
-      await enqueueEmail(db, {
+      await enqueuePatientNotifications(db, {
         userId: user.id,
         appointmentId: appointment.appt.id,
         template: "booking_confirmed",
@@ -324,6 +324,8 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
           arrivalWindow: appointment.assignedWaveArrivalWindow,
         },
         dedupeKey: `email:booking_confirmed:${appointment.appt.id}`,
+        whatsappTemplate: "appointment_confirmed",
+        whatsappDedupeKey: `whatsapp:appointment_confirmed:${appointment.appt.id}`,
       });
     } catch (notifError) {
       console.error("[bookAppointmentAction] Error sending post-commit notifications:", notifError);
@@ -500,7 +502,7 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
     });
 
     // Outbox email
-    await enqueueEmail(db, {
+    await enqueuePatientNotifications(db, {
       userId: user.id,
       appointmentId,
       template: "appointment_cancelled",
@@ -510,8 +512,11 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
         endTime: appointment.availability.endTime.toISOString(),
         cancelledBy: "PATIENT",
         refundSummary,
+        refundInitiated: Boolean(refundSummary && !refundSummary.includes("not eligible")),
       },
       dedupeKey: `email:appointment_cancelled:${appointmentId}`,
+      whatsappTemplate: "appointment_cancelled",
+      whatsappDedupeKey: `whatsapp:appointment_cancelled:${appointmentId}`,
     });
 
     // Notify waitlist if slot became AVAILABLE
