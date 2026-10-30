@@ -32,7 +32,7 @@ import {
   deleteDoctorDraftWaveAction,
   reassignDoctorWaveAppointmentAction,
 } from "@/lib/actions/waves";
-import { formatTimeIST } from "@/lib/time";
+import { formatTimeIST, formatSlotRange } from "@/lib/time";
 import type { SerializedWave } from "@/lib/serializers";
 import type { AppointmentStatus } from "@/generated/prisma/enums";
 
@@ -281,7 +281,7 @@ export function DoctorWaveDetailView({
                     <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                       <span className="flex items-center gap-1 font-medium text-foreground">
                         <Clock className="h-3.5 w-3.5 text-primary" />
-                        Consultation Slot: {formatTimeIST(appt.slotStartTime)} – {formatTimeIST(appt.slotEndTime)}
+                        Consultation Slot: {formatSlotRange(appt.slotStartTime, appt.slotEndTime)}
                       </span>
                       {appt.patientPhone && (
                         <>

@@ -27,7 +27,7 @@ import {
   setPriorityStreamAction,
 } from "@/lib/actions/queue";
 import { updateDoctorAppointmentStatusAction } from "@/lib/actions/doctor-appointments";
-import { formatTimeIST } from "@/lib/time";
+import { formatTimeIST, formatSlotRange } from "@/lib/time";
 import { STREAM_CONFIGS } from "@/lib/streams";
 import { EMERGENCY_DISCLAIMER, type QueueSummary } from "@/lib/queue";
 import type { SerializedDoctorQueueItem } from "@/lib/serializers";
@@ -205,7 +205,7 @@ export function DoctorQueueView({ queueItems, summary }: DoctorQueueViewProps) {
                     {nextPatientToCall.patientName}
                   </h3>
                   <span className="text-xs font-semibold text-muted-foreground">
-                    Slot: {formatTimeIST(nextPatientToCall.scheduledStart)} - {formatTimeIST(nextPatientToCall.scheduledEnd)}
+                    Slot: {formatSlotRange(nextPatientToCall.scheduledStart, nextPatientToCall.scheduledEnd)}
                   </span>
                   {nextPatientToCall.checkedInAt && (
                     <span className="text-xs text-amber-700 dark:text-amber-400 font-medium">
@@ -297,7 +297,7 @@ export function DoctorQueueView({ queueItems, summary }: DoctorQueueViewProps) {
                       <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                         <span className="flex items-center gap-1 font-medium text-foreground">
                           <Clock className="h-3.5 w-3.5 text-primary" />
-                          Scheduled: {formatTimeIST(scheduledStart)} - {formatTimeIST(scheduledEnd)}
+                          Scheduled: {formatSlotRange(scheduledStart, scheduledEnd)}
                         </span>
                         <span>•</span>
                         <span className="flex items-center gap-1">
