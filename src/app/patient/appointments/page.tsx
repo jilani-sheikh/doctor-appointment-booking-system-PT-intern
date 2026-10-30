@@ -36,6 +36,10 @@ export default async function PatientAppointmentsPage() {
     },
     include: {
       wave: true,
+      payments: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      },
       availability: {
         include: {
           doctor: {
@@ -102,6 +106,7 @@ export default async function PatientAppointmentsPage() {
     const isFuture = appt.availability.startTime >= now;
     const isActiveStatus =
       appt.status === AppointmentStatus.PENDING ||
+      appt.status === AppointmentStatus.PENDING_PAYMENT ||
       appt.status === AppointmentStatus.CONFIRMED ||
       appt.status === AppointmentStatus.CHECKED_IN ||
       appt.status === AppointmentStatus.IN_CONSULTATION;

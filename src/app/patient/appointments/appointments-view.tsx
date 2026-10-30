@@ -1,14 +1,23 @@
 "use client";
 
-import { useEffect, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cancelPatientAppointmentAction } from "@/lib/actions/appointments";
+import { cancelHoldAction } from "@/lib/actions/payments";
 import { patientCheckInAction } from "@/lib/actions/queue";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   Calendar,
@@ -20,11 +29,14 @@ import {
   Activity,
   AlertCircle,
   Waves,
+  CreditCard,
+  ShieldCheck,
+  Loader2,
 } from "lucide-react";
 import { formatDateTimeIST, formatTimeIST } from "@/lib/time";
 import { STREAM_CONFIGS } from "@/lib/streams";
 import { EMERGENCY_DISCLAIMER } from "@/lib/queue";
-import type { AppointmentStatus } from "@/generated/prisma/enums";
+import type { AppointmentStatus } from "@/generated/prisma/client";
 import type { SerializedPatientAppointment } from "@/lib/serializers";
 export type { SerializedPatientAppointment };
 
@@ -40,6 +52,10 @@ export function AppointmentsView({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
+  // Cancellation Modal State
+  const [cancelModalAppt, setCancelModalAppt] = useState<SerializedPatientAppointment | null>(null);
+  const [cancelModalTime, setCancelModalTime] = useState<number>(0);
+
   // Auto-refresh every 30 seconds while tab is active and visible
   useEffect(() => {
     const interval = setInterval(() => {
@@ -51,19 +67,57 @@ export function AppointmentsView({
     return () => clearInterval(interval);
   }, [router]);
 
-  const handleCancel = (appointmentId: string) => {
-    if (!confirm("Are you sure you want to cancel this appointment? Your slot will be freed.")) {
-      return;
-    }
+  const openCancelModal = (appt: SerializedPatientAppointment) => {
+    setCancelModalAppt(appt);
+    setCancelModalTime(Date.now());
+  };
+
+  const handleConfirmCancel = () => {
+    if (!cancelModalAppt) return;
+    const apptId = cancelModalAppt.id;
 
     startTransition(async () => {
-      const res = await cancelPatientAppointmentAction(appointmentId);
+      const res = await cancelPatientAppointmentAction(apptId);
+      setCancelModalAppt(null);
       if (res.success) {
         toast.success(res.message);
       } else {
         toast.error(res.error || "Failed to cancel appointment.");
       }
     });
+  };
+
+  const handleCancelHold = (appointmentId: string) => {
+    startTransition(async () => {
+      const res = await cancelHoldAction(appointmentId);
+      if (res.success) {
+        toast.success(res.message);
+      } else {
+        toast.error(res.error || "Failed to cancel hold.");
+      }
+    });
+  };
+
+  const handleResumePayment = async (appt: SerializedPatientAppointment) => {
+    if (!appt.paymentSessionId) {
+      toast.error("Checkout session has expired. Please reserve an available slot.");
+      return;
+    }
+
+    toast.loading("Resuming secure payment checkout...", { id: "checkout" });
+    try {
+      const { load } = await import("@cashfreepayments/cashfree-js");
+      const cashfree = await load({
+        mode: process.env.NEXT_PUBLIC_CASHFREE_ENV === "production" ? "production" : "sandbox",
+      });
+      await cashfree.checkout({
+        paymentSessionId: appt.paymentSessionId,
+        redirectTarget: "_self",
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to launch payment checkout.";
+      toast.error(message, { id: "checkout" });
+    }
   };
 
   const handleCheckIn = (appointmentId: string) => {
@@ -79,6 +133,8 @@ export function AppointmentsView({
 
   const getStatusBadge = (status: AppointmentStatus) => {
     switch (status) {
+      case "PENDING_PAYMENT":
+        return <Badge className="bg-amber-500/15 text-amber-700 border-amber-500/30 text-[10px] uppercase font-semibold">Hold - Payment Pending</Badge>;
       case "PENDING":
         return <Badge variant="warning" className="text-[10px] uppercase font-semibold">Pending</Badge>;
       case "CONFIRMED":
@@ -102,22 +158,20 @@ export function AppointmentsView({
     if (appointments.length === 0) {
       return (
         <Card className="border-dashed border-2">
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
-            <Calendar className="h-10 w-10 mb-3 opacity-40 text-primary" />
-            <h3 className="font-semibold text-foreground text-base">
-              {isUpcomingTab ? "No Upcoming Consultations" : "No Past Appointments"}
+          <CardContent className="flex flex-col items-center justify-center p-12 text-center">
+            <Calendar className="h-10 w-10 text-muted-foreground/60 mb-3" />
+            <h3 className="font-semibold text-base text-foreground mb-1">
+              {isUpcomingTab ? "No upcoming consultations" : "No consultation history"}
             </h3>
-            <p className="text-sm mt-1 max-w-sm">
+            <p className="text-xs text-muted-foreground max-w-sm mb-4">
               {isUpcomingTab
-                ? "You don't have any upcoming doctor appointments scheduled."
-                : "You don't have any past appointment history."}
+                ? "You don't have any active or upcoming medical appointments scheduled."
+                : "Your past consultations, completed visits, and cancellations will appear here."}
             </p>
             {isUpcomingTab && (
-              <div className="pt-4">
-                <Link href="/doctors" className={buttonVariants({ size: "sm" })}>
-                  Find a Doctor
-                </Link>
-              </div>
+              <Link href="/doctors" className={buttonVariants({ size: "sm" })}>
+                Find a Doctor & Book
+              </Link>
             )}
           </CardContent>
         </Card>
@@ -131,23 +185,62 @@ export function AppointmentsView({
           const endDate = new Date(appt.slotEndTime);
           const streamConfig = STREAM_CONFIGS[appt.stream];
           const isDisrupted = Boolean(appt.disruptedAt);
+          const isPendingHold = appt.status === "PENDING_PAYMENT";
 
           return (
             <Card
               key={appt.id}
-              className={`overflow-hidden border-border shadow-xs hover:border-primary/40 transition-all ${
-                isDisrupted ? "border-amber-400 dark:border-amber-800 bg-amber-50/20 dark:bg-amber-950/10" : ""
+              className={`overflow-hidden transition-all duration-200 border ${
+                isPendingHold
+                  ? "border-amber-400 bg-amber-500/5 shadow-sm"
+                  : isDisrupted
+                  ? "border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-950/20"
+                  : "hover:border-primary/40 shadow-sm"
               }`}
             >
-              <CardContent className="p-5 space-y-3">
+              <CardContent className="p-4 sm:p-5 space-y-3">
+                {/* Pending Payment Hold Notice */}
+                {isPendingHold && (
+                  <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-900 dark:text-amber-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-amber-600 shrink-0" />
+                      <span>
+                        <strong>Provisional Hold Active:</strong> Reserved until{" "}
+                        {appt.holdExpiresAt ? formatTimeIST(appt.holdExpiresAt) : "15 minutes"}{" "}
+                        (IST). Complete payment to secure this slot.
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        size="xs"
+                        className="bg-primary hover:bg-primary/90 text-white gap-1"
+                        onClick={() => handleResumePayment(appt)}
+                        disabled={isPending}
+                      >
+                        <CreditCard className="h-3 w-3" />
+                        Complete Payment
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        className="border-amber-500/30 text-amber-900 dark:text-amber-200"
+                        onClick={() => handleCancelHold(appt.id)}
+                        disabled={isPending}
+                      >
+                        Cancel Hold
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Disruption Alert Banner */}
                 {isDisrupted && (
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg bg-amber-100/70 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-100">
+                  <div className="rounded-md bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700 p-3 text-xs text-amber-900 dark:text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-                      <div className="text-xs">
-                        <strong>Your doctor is unavailable: </strong>
-                        <span>{appt.disruptionReason ?? "Schedule disruption"}. Please reschedule or cancel without penalty.</span>
+                      <div>
+                        <strong className="font-semibold">Schedule Disrupted: </strong>
+                        <span>{appt.disruptionReason ?? "Schedule disruption"}. Please reschedule or cancel with 100% refund.</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -157,19 +250,13 @@ export function AppointmentsView({
                       >
                         Reschedule
                       </Link>
-                      <Link
-                        href={`/doctors?specialization=${encodeURIComponent(appt.doctor.specialization)}`}
-                        className={buttonVariants({ size: "xs", variant: "outline" })}
-                      >
-                        Other Doctors
-                      </Link>
                       <Button
                         variant="destructive"
                         size="xs"
                         disabled={isPending}
-                        onClick={() => handleCancel(appt.id)}
+                        onClick={() => openCancelModal(appt)}
                       >
-                        Cancel
+                        Cancel Consultation
                       </Button>
                     </div>
                   </div>
@@ -256,7 +343,7 @@ export function AppointmentsView({
                     )}
 
                     {/* Reschedule Button */}
-                    {isUpcomingTab && appt.canReschedule && !isDisrupted && (
+                    {isUpcomingTab && appt.canReschedule && !isDisrupted && !isPendingHold && (
                       <Link
                         href={`/book/reschedule/${appt.id}`}
                         className={buttonVariants({ variant: "outline", size: "xs", className: "gap-1" })}
@@ -273,12 +360,12 @@ export function AppointmentsView({
                       Doctor Profile
                     </Link>
 
-                    {isUpcomingTab && appt.canCancel && !isDisrupted && (
+                    {isUpcomingTab && appt.canCancel && !isDisrupted && !isPendingHold && (
                       <Button
                         variant="destructive"
                         size="xs"
                         disabled={isPending}
-                        onClick={() => handleCancel(appt.id)}
+                        onClick={() => openCancelModal(appt)}
                         className="gap-1"
                       >
                         <Ban className="h-3 w-3" />
@@ -294,6 +381,27 @@ export function AppointmentsView({
       </div>
     );
   };
+
+  // Compute refund preview for cancellation modal
+  let refundPreviewText = "No payment was recorded for this appointment.";
+  if (cancelModalAppt) {
+    const fee = cancelModalAppt.doctor.consultationFee;
+    const now = cancelModalTime || new Date(cancelModalAppt.slotStartTime).getTime();
+    const diffHours = (new Date(cancelModalAppt.slotStartTime).getTime() - now) / (1000 * 60 * 60);
+
+    if (cancelModalAppt.disruptedAt) {
+      refundPreviewText = `Full refund of ₹${fee.toLocaleString("en-IN")} (100%) due to schedule disruption.`;
+    } else if (fee > 0) {
+      if (diffHours >= 24) {
+        refundPreviewText = `You will be refunded ₹${fee.toLocaleString("en-IN")} (100% refund for cancelling >= 24h prior).`;
+      } else if (diffHours >= 2) {
+        const halfFee = Math.round(fee / 2);
+        refundPreviewText = `You will be refunded ₹${halfFee.toLocaleString("en-IN")} (50% refund for cancelling between 2h and 24h prior).`;
+      } else {
+        refundPreviewText = "No refund is applicable for cancellations within 2 hours of consultation.";
+      }
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -321,6 +429,61 @@ export function AppointmentsView({
           {renderAppointmentList(pastAppointments, false)}
         </TabsContent>
       </Tabs>
+
+      {/* Cancellation Confirmation Dialog with Refund Policy Breakdown */}
+      <Dialog open={Boolean(cancelModalAppt)} onOpenChange={(open) => !open && setCancelModalAppt(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Ban className="h-5 w-5" />
+              Cancel Consultation
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to cancel your consultation with Dr. {cancelModalAppt?.doctor.name}?
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-3 text-sm">
+            <div className="rounded-lg bg-muted/50 p-3 border border-border/60 space-y-1.5 text-xs">
+              <div className="font-semibold text-foreground flex items-center gap-1.5">
+                <ShieldCheck className="h-4 w-4 text-primary" />
+                <span>Refund Policy Assessment</span>
+              </div>
+              <p className="text-foreground font-medium">{refundPreviewText}</p>
+              <p className="text-muted-foreground">
+                Refunds are processed to your original payment method and typically reflect within 3 to 7 business days.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isPending}
+              onClick={() => setCancelModalAppt(null)}
+            >
+              Keep Appointment
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={isPending}
+              onClick={handleConfirmCancel}
+              className="gap-2"
+            >
+              {isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Cancelling...
+                </>
+              ) : (
+                "Confirm Cancellation"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

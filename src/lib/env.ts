@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_CASHFREE_API_VERSION, DEFAULT_REMINDER_OFFSETS_MINUTES } from "@/lib/constants";
 
 /**
  * Zod schema for required and optional environment variables.
@@ -42,6 +43,22 @@ const envSchema = z.object({
   AUTH_URL: z.string().url().optional(),
 
   ADMIN_EMAILS: z.string().optional(),
+
+  // Payments & Notifications configuration
+  PAYMENTS_MODE: z.enum(["disabled", "cashfree"]).default("disabled"),
+  APP_URL: z.string().url().optional(),
+  NEXT_PUBLIC_APP_URL: z.string().url().optional(),
+  CASHFREE_ENV: z.enum(["sandbox", "production"]).default("sandbox"),
+  CASHFREE_API_VERSION: z.string().default(DEFAULT_CASHFREE_API_VERSION),
+  CASHFREE_KEY_ID: z.string().optional(),
+  CASHFREE_APP_ID: z.string().optional(),
+  CASHFREE_SECRET: z.string().optional(),
+  CASHFREE_SECRET_KEY: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  RESEND_FROM_EMAIL: z.string().optional(),
+  EMAIL_FROM: z.string().optional(),
+  CRON_SECRET: z.string().optional(),
+  REMINDER_OFFSETS_MINUTES: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -158,6 +175,150 @@ export function isAdminEmail(email?: string | null): boolean {
   if (!email) return false;
   const normalized = email.trim().toLowerCase();
   return getAdminEmails().includes(normalized);
+}
+
+/**
+ * Retrieves the application Payments Mode.
+ * Defaults to "disabled" (auto-confirms bookings without payment rows).
+ * Only "cashfree" switches to online payment flow.
+ */
+export function getPaymentsMode(): "disabled" | "cashfree" {
+  const raw = process.env.PAYMENTS_MODE?.trim().toLowerCase();
+  if (raw === "cashfree") {
+    return "cashfree";
+  }
+  return "disabled";
+}
+
+/**
+ * Lazily retrieves the canonical application base URL without trailing slash.
+ * Reads APP_URL first, then NEXT_PUBLIC_APP_URL, defaulting to "http://localhost:3000".
+ */
+export function getAppUrl(): string {
+  const raw = process.env.APP_URL?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim() || "http://localhost:3000";
+  return raw.replace(/\/+$/, "");
+}
+
+/**
+ * Lazily retrieves Cashfree Client ID (App ID).
+ * Accepts CASHFREE_KEY_ID (canonical) with fallback to CASHFREE_APP_ID.
+ */
+export function getCashfreeKeyId(): string {
+  const keyId = process.env.CASHFREE_KEY_ID?.trim() || process.env.CASHFREE_APP_ID?.trim();
+  if (!keyId) {
+    throw new Error(
+      "[Medrella Config Error] Missing required environment variable: CASHFREE_KEY_ID\n" +
+      "Please configure CASHFREE_KEY_ID (or CASHFREE_APP_ID) in your environment variables."
+    );
+  }
+  return keyId;
+}
+
+/**
+ * Lazily retrieves Cashfree Secret Key.
+ * Accepts CASHFREE_SECRET (canonical) with fallback to CASHFREE_SECRET_KEY.
+ */
+export function getCashfreeSecret(): string {
+  const secret = process.env.CASHFREE_SECRET?.trim() || process.env.CASHFREE_SECRET_KEY?.trim();
+  if (!secret) {
+    throw new Error(
+      "[Medrella Config Error] Missing required environment variable: CASHFREE_SECRET\n" +
+      "Please configure CASHFREE_SECRET (or CASHFREE_SECRET_KEY) in your environment variables."
+    );
+  }
+  return secret;
+}
+
+/**
+ * Check whether Cashfree credentials are configured without throwing.
+ */
+export function isCashfreeConfigured(): boolean {
+  const keyId = process.env.CASHFREE_KEY_ID?.trim() || process.env.CASHFREE_APP_ID?.trim();
+  const secret = process.env.CASHFREE_SECRET?.trim() || process.env.CASHFREE_SECRET_KEY?.trim();
+  return Boolean(keyId && secret);
+}
+
+/**
+ * Retrieves Cashfree Environment: "sandbox" (default) or "production".
+ * Production is refused unless explicitly set to "production".
+ */
+export function getCashfreeEnv(): "sandbox" | "production" {
+  const raw = process.env.CASHFREE_ENV?.trim().toLowerCase();
+  if (raw === "production") {
+    return "production";
+  }
+  return "sandbox";
+}
+
+/**
+ * Retrieves Cashfree API Version header. Defaults to canonical "2023-08-01".
+ */
+export function getCashfreeApiVersion(): string {
+  return process.env.CASHFREE_API_VERSION?.trim() || DEFAULT_CASHFREE_API_VERSION;
+}
+
+/**
+ * Lazily retrieves Resend API Key.
+ */
+export function getResendApiKey(): string {
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error(
+      "[Medrella Config Error] Missing required environment variable: RESEND_API_KEY\n" +
+      "Please configure RESEND_API_KEY in your environment variables."
+    );
+  }
+  return apiKey;
+}
+
+/**
+ * Check whether Resend is configured without throwing.
+ */
+export function isResendConfigured(): boolean {
+  return Boolean(process.env.RESEND_API_KEY && process.env.RESEND_API_KEY.trim().length > 0);
+}
+
+/**
+ * Retrieves the Resend sender email address.
+ * Accepts RESEND_FROM_EMAIL (canonical) with fallback to EMAIL_FROM.
+ * Defaults to "onboarding@resend.dev".
+ */
+export function getResendFromEmail(): string {
+  return (
+    process.env.RESEND_FROM_EMAIL?.trim() ||
+    process.env.EMAIL_FROM?.trim() ||
+    "onboarding@resend.dev"
+  );
+}
+
+/**
+ * Lazily retrieves CRON_SECRET for securing /api/cron/tick.
+ */
+export function getCronSecret(): string {
+  const secret = process.env.CRON_SECRET?.trim();
+  if (!secret) {
+    throw new Error(
+      "[Medrella Config Error] Missing required environment variable: CRON_SECRET\n" +
+      "Please configure CRON_SECRET in your environment variables."
+    );
+  }
+  return secret;
+}
+
+/**
+ * Retrieves parsed reminder offsets in minutes prior to appointment start time.
+ * Parses comma-separated string e.g. "1440,120".
+ */
+export function getReminderOffsetsMinutes(): number[] {
+  const raw = process.env.REMINDER_OFFSETS_MINUTES?.trim();
+  if (!raw) {
+    return DEFAULT_REMINDER_OFFSETS_MINUTES;
+  }
+  const parsed = raw
+    .split(",")
+    .map((val) => parseInt(val.trim(), 10))
+    .filter((n) => !isNaN(n) && n > 0);
+  return parsed.length > 0 ? parsed : DEFAULT_REMINDER_OFFSETS_MINUTES;
 }
 
 /**

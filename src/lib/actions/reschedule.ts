@@ -13,6 +13,8 @@ import {
   type RescheduleAppointmentInput,
   type WaitlistEntryInput,
 } from "@/lib/validations/reschedule";
+import { enqueueEmail } from "@/lib/notifications/index";
+import { syncAppointmentReminders } from "@/lib/notifications/reminders";
 import { revalidatePath } from "next/cache";
 
 /**
@@ -121,6 +123,14 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
         // (c) Free the old slot using shared releaseSlot helper
         const oldRelease = await releaseSlot(tx, oldAvailabilityId);
 
+        // (d) Synchronize reminders for new slot time
+        await syncAppointmentReminders(tx, {
+          appointmentId,
+          userId: user.id,
+          slotStartTime: newSlot.startTime,
+          status: AppointmentStatus.CONFIRMED,
+        });
+
         return { oldRelease };
       },
       { maxWait: 10000, timeout: 20000 }
@@ -137,6 +147,19 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
       title: "Appointment Rescheduled",
       body: `Your consultation with Dr. ${doctorName} has been rescheduled to ${newSlotTimeFormatted}.`,
       href: "/patient/appointments",
+    });
+
+    // Enqueue outbox email
+    await enqueueEmail(db, {
+      userId: user.id,
+      appointmentId,
+      template: "appointment_rescheduled",
+      payload: {
+        doctorName,
+        oldStartTime: appointment.availability.startTime.toISOString(),
+        newStartTime: newSlot.startTime.toISOString(),
+      },
+      dedupeKey: `email:rescheduled:${appointmentId}:${newSlot.startTime.getTime()}`,
     });
 
     // Notify doctor

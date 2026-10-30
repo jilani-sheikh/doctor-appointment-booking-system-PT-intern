@@ -14,6 +14,7 @@ import {
   canDoctorNoShow,
 } from "@/lib/appointment-status";
 import { checkAndNotifyQueueDelay } from "@/lib/notifications";
+import { syncAppointmentReminders } from "@/lib/notifications/reminders";
 import { revalidatePath } from "next/cache";
 
 /**
@@ -63,6 +64,14 @@ export async function patientCheckInAction(appointmentId: string) {
     if (updated.count === 0) {
       return { success: false, error: "Appointment could not be checked in. Please refresh." };
     }
+
+    // Skip remaining reminders since patient has checked in
+    await syncAppointmentReminders(db, {
+      appointmentId,
+      userId: user.id,
+      slotStartTime: appointment.availability.startTime,
+      status: AppointmentStatus.CHECKED_IN,
+    });
 
     revalidatePath("/patient/appointments");
     revalidatePath("/patient/dashboard");

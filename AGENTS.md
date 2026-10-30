@@ -26,4 +26,15 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **Auto-Confirmed Bookings Architecture:** Doctors manage and publish their own consultation slots; booking a slot IS the confirmation. Appointments are created with status `CONFIRMED` immediately. The doctor confirmation step is removed from doctor workflows.
 - **Rescheduling Status Preservation:** Patient rescheduling retains `CONFIRMED` status and does not reset to `PENDING`. Wave assignment is cleared so the rescheduled appointment can be reassigned or included in future waves.
 - **Abuse Guard Enforcement:** `bookAppointmentAction` server-side strictly limits patients to at most 3 active upcoming consultations (`CONFIRMED`/`CHECKED_IN` with slot in future) and at most 1 active consultation per doctor per day (IST). Constants reside in `src/lib/constants.ts`.
-- **Role & Scope Boundaries:** There is no receptionist role. Outpatient consultations auto-confirm directly. Payment processing is strictly future work and out of scope.
+- **Role & Scope Boundaries:** There is no receptionist role. Outpatient consultations auto-confirm directly.
+
+### Payments, Refunds & Notification Architecture
+- **Payment Provider Abstraction:** Payment operations must go through `PaymentProvider` interface in `src/lib/payments/types.ts` via `getPaymentProvider()`. Default implementation is `CashfreeProvider` with `FakePaymentProvider` fallback for testing.
+- **Rollout Modes:** Controlled by `PAYMENTS_MODE` env var: `"disabled"` (free booking bypass), `"cashfree"` (live Cashfree checkout). Free consultations (`consultationFee <= 0`) always bypass payment.
+- **Checkout Hold Invariant:** Slot checkout creates an appointment in `PENDING_PAYMENT` with `holdExpiresAt = now + 10m` while slot availability is updated to `BOOKED`. Expired holds are released by `expireStaleHolds` running in `/api/cron/tick`.
+- **Paise Precision:** All currency logic operates in integer paise internally. Database stores Decimal(10,2) in rupees. Always use helpers in `src/lib/money.ts`.
+- **Refund Idempotency:** The `Refund` row (status `REQUESTED`, deterministic `providerRefundId`) MUST be inserted before invoking the gateway. Unique constraint `@@unique([paymentId, reason, appointmentId])` prevents duplicate refunds.
+- **Webhook Replay Protection & Idempotency:** Webhook requests must verify HMAC-SHA256 signature and reject timestamps deviating > 5 minutes from server clock with HTTP 401. Webhook events are idempotently tracked in `payment_webhook_events`.
+- **Truthful Status Display:** Refund statuses (`REQUESTED`, `PENDING`, `SUCCESS`, `FAILED`) and email notifications must always be truthful and never labeled "Refunded" until provider status is `SUCCESS`.
+- **Outbox Email Deliveries:** Transactional emails are scheduled via `notification_deliveries` outbox table and dispatched by `/api/cron/tick` or immediate best-effort send.
+
