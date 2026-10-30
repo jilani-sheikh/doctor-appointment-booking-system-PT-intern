@@ -5,6 +5,7 @@ export interface SyncRemindersParams {
   appointmentId: string;
   userId: string;
   slotStartTime: Date;
+  slotEndTime?: Date;
   status: AppointmentStatus;
   now?: Date;
 }
@@ -87,6 +88,7 @@ export async function syncAppointmentReminders(
           payload: {
             offsetMinutes: offset,
             slotStartTime: slotStartTime.toISOString(),
+            ...(params.slotEndTime ? { slotEndTime: params.slotEndTime.toISOString() } : {}),
           },
           dedupeKey,
           scheduledFor,

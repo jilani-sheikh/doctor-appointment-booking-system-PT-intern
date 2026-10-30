@@ -19,7 +19,9 @@ export interface DeliveryPayload {
   doctorName?: string;
   specialization?: string;
   startTime?: string | Date;
+  endTime?: string | Date;
   slotStartTime?: string | Date;
+  slotEndTime?: string | Date;
   arrivalWindow?: string;
   amountRupees?: number;
   providerOrderId?: string;
@@ -29,7 +31,9 @@ export interface DeliveryPayload {
   cancelledBy?: string;
   refundSummary?: string;
   oldStartTime?: string | Date;
+  oldEndTime?: string | Date;
   newStartTime?: string | Date;
+  newEndTime?: string | Date;
   status?: "PENDING" | "FAILED" | "REQUESTED" | "SUCCESS";
   providerRefundId?: string;
   failureReason?: string;
@@ -163,7 +167,12 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
         patientName: delivery.user.name || "Patient",
         doctorName: payload.doctorName || "Practitioner",
         specialization: payload.specialization || "General",
-        startTime: new Date(payload.startTime || Date.now()),
+        startTime: new Date(payload.startTime || delivery.appointment?.availability.startTime || Date.now()),
+        endTime: payload.endTime
+          ? new Date(payload.endTime)
+          : delivery.appointment?.availability.endTime
+          ? new Date(delivery.appointment.availability.endTime)
+          : undefined,
         arrivalWindow: payload.arrivalWindow,
       });
       break;
@@ -186,7 +195,12 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
       emailContent = renderAppointmentCancelledEmail({
         patientName: delivery.user.name || "Patient",
         doctorName: payload.doctorName || "Practitioner",
-        startTime: new Date(payload.startTime || Date.now()),
+        startTime: new Date(payload.startTime || delivery.appointment?.availability.startTime || Date.now()),
+        endTime: payload.endTime
+          ? new Date(payload.endTime)
+          : delivery.appointment?.availability.endTime
+          ? new Date(delivery.appointment.availability.endTime)
+          : undefined,
         cancelledBy: payload.cancelledBy || "SYSTEM",
         refundSummary: payload.refundSummary,
       });
@@ -198,7 +212,9 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
         patientName: delivery.user.name || "Patient",
         doctorName: payload.doctorName || "Practitioner",
         oldStartTime: new Date(payload.oldStartTime || Date.now()),
+        oldEndTime: payload.oldEndTime ? new Date(payload.oldEndTime) : undefined,
         newStartTime: new Date(payload.newStartTime || Date.now()),
+        newEndTime: payload.newEndTime ? new Date(payload.newEndTime) : undefined,
       });
       break;
 
@@ -229,6 +245,13 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
         patientName: delivery.user.name || "Patient",
         doctorName: payload.doctorName || "Practitioner",
         startTime: new Date(payload.slotStartTime || payload.startTime || delivery.appointment?.availability.startTime || Date.now()),
+        endTime: payload.slotEndTime
+          ? new Date(payload.slotEndTime)
+          : payload.endTime
+          ? new Date(payload.endTime)
+          : delivery.appointment?.availability.endTime
+          ? new Date(delivery.appointment.availability.endTime)
+          : undefined,
         offsetMinutes: payload.offsetMinutes || 120,
       });
       break;
@@ -238,7 +261,12 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
       emailContent = renderDoctorNewBookingEmail({
         doctorName: delivery.user.name || "Doctor",
         patientName: payload.patientName || "Patient",
-        startTime: new Date(payload.startTime || Date.now()),
+        startTime: new Date(payload.startTime || delivery.appointment?.availability.startTime || Date.now()),
+        endTime: payload.endTime
+          ? new Date(payload.endTime)
+          : delivery.appointment?.availability.endTime
+          ? new Date(delivery.appointment.availability.endTime)
+          : undefined,
       });
       break;
 

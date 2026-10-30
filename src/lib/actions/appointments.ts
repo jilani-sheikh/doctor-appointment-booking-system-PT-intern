@@ -20,7 +20,7 @@ import { releaseSlot, notifyWaitlistAfterSlotRelease } from "@/lib/slots";
 import { createNotification } from "@/lib/notifications";
 import { enqueueEmail } from "@/lib/notifications/index";
 import { syncAppointmentReminders } from "@/lib/notifications/reminders";
-import { formatDateTimeIST, formatDateIST, getISTDateString, getISTDayRangeUTC } from "@/lib/time";
+import { formatDateIST, formatSlotDateTimeRangeIST, getISTDateString, getISTDayRangeUTC } from "@/lib/time";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
 import {
   MAX_ACTIVE_UPCOMING_APPOINTMENTS_PER_PATIENT,
@@ -279,6 +279,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
           appointmentId: appt.id,
           userId: user.id,
           slotStartTime: slot.startTime,
+          slotEndTime: slot.endTime,
           status: AppointmentStatus.CONFIRMED,
         });
 
@@ -288,7 +289,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
     );
 
     // Notifications dispatched post-commit
-    const slotTimeFormatted = formatDateTimeIST(slot.startTime);
+    const slotTimeFormatted = formatSlotDateTimeRangeIST(slot.startTime, slot.endTime);
     const doctorName = slot.doctor.user.name ?? "Practitioner";
     const arrivalNote = appointment.assignedWaveArrivalWindow
       ? ` Arrival window: ${appointment.assignedWaveArrivalWindow} IST.`
@@ -319,6 +320,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
           doctorName,
           specialization: slot.doctor.specialization,
           startTime: slot.startTime.toISOString(),
+          endTime: slot.endTime.toISOString(),
           arrivalWindow: appointment.assignedWaveArrivalWindow,
         },
         dedupeKey: `email:booking_confirmed:${appointment.appt.id}`,
@@ -475,7 +477,7 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
       }
     }
 
-    const slotTimeFormatted = `${formatDateTimeIST(appointment.availability.startTime)} IST`;
+    const slotTimeFormatted = `${formatSlotDateTimeRangeIST(appointment.availability.startTime, appointment.availability.endTime)} IST`;
     const doctorName = appointment.availability.doctor.user.name ?? "Practitioner";
 
     // In-app Notifications
@@ -505,6 +507,7 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
       payload: {
         doctorName,
         startTime: appointment.availability.startTime.toISOString(),
+        endTime: appointment.availability.endTime.toISOString(),
         cancelledBy: "PATIENT",
         refundSummary,
       },

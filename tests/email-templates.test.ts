@@ -124,4 +124,49 @@ describe("Email Templates & Escaping", () => {
     assert.equal(res.html.includes("Rescheduled"), true);
     assert.equal(res.html.includes("Jane Doe"), true);
   });
+
+  it("renders slot time ranges when endTime is provided", () => {
+    // 03:00 PM to 03:30 PM IST (baseTime is 09:30 UTC -> 15:00 IST)
+    const endTime = new Date("2026-11-05T10:00:00Z"); // 15:30 IST
+
+    const confirmed = renderBookingConfirmedEmail({
+      patientName: "Jane Doe",
+      doctorName: "Smith",
+      specialization: "General Medicine",
+      startTime: baseTime,
+      endTime,
+      arrivalWindow: "02:45 PM – 03:30 PM",
+    });
+    assert.equal(confirmed.html.includes("03:00 pm - 03:30 pm"), true);
+    assert.equal(confirmed.text.includes("03:00 pm - 03:30 pm"), true);
+
+    const cancelled = renderAppointmentCancelledEmail({
+      patientName: "Jane Doe",
+      doctorName: "Smith",
+      startTime: baseTime,
+      endTime,
+      cancelledBy: "DOCTOR",
+    });
+    assert.equal(cancelled.html.includes("03:00 pm - 03:30 pm"), true);
+
+    const rescheduled = renderAppointmentRescheduledEmail({
+      patientName: "Jane Doe",
+      doctorName: "Smith",
+      oldStartTime: baseTime,
+      oldEndTime: endTime,
+      newStartTime: new Date("2026-11-06T04:30:00Z"), // 10:00 AM IST
+      newEndTime: new Date("2026-11-06T05:00:00Z"),   // 10:30 AM IST
+    });
+    assert.equal(rescheduled.html.includes("03:00 pm - 03:30 pm"), true);
+    assert.equal(rescheduled.html.includes("10:00 am - 10:30 am"), true);
+
+    const reminder = renderAppointmentReminderEmail({
+      patientName: "Jane Doe",
+      doctorName: "Smith",
+      startTime: baseTime,
+      endTime,
+      offsetMinutes: 60,
+    });
+    assert.equal(reminder.html.includes("03:00 pm - 03:30 pm"), true);
+  });
 });
