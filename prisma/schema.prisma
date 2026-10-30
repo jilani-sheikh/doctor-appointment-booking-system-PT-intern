@@ -27,6 +27,7 @@ enum SlotStatus {
 
 enum AppointmentStatus {
   PENDING
+  PENDING_PAYMENT
   CONFIRMED
   CHECKED_IN
   IN_CONSULTATION
@@ -58,23 +59,64 @@ enum NotificationType {
   GENERAL
 }
 
-model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime? @map("email_verified")
-  image         String?
-  role          Role?
-  passwordHash  String?   @map("password_hash")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+enum PaymentStatus {
+  CREATED
+  PENDING
+  PAID
+  FAILED
+  ABANDONED
+  EXPIRED
+}
 
-  accounts      Account[]
-  sessions      Session[]
-  patient       Patient?
-  doctor        Doctor?
-  wavesCreated  Wave[]
-  notifications Notification[]
+enum RefundStatus {
+  REQUESTED
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum RefundReason {
+  PATIENT_CANCELLED
+  DOCTOR_CANCELLED
+  DOCTOR_ABSENCE
+  SLOT_LOST_AFTER_PAYMENT
+  POLICY_ADJUSTMENT
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum DeliveryStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+  SKIPPED
+}
+
+model User {
+  id                    String    @id @default(cuid())
+  name                  String?
+  email                 String?   @unique
+  emailVerified         DateTime? @map("email_verified")
+  image                 String?
+  role                  Role?
+  passwordHash          String?   @map("password_hash")
+  emailRemindersEnabled Boolean   @default(true) @map("email_reminders_enabled")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  accounts               Account[]
+  sessions               Session[]
+  patient                Patient?
+  doctor                 Doctor?
+  wavesCreated           Wave[]
+  notifications          Notification[]
+  notificationDeliveries NotificationDelivery[]
 
   @@map("users")
 }
@@ -104,7 +146,8 @@ model Session {
   sessionToken String   @unique @map("session_token")
   userId       String   @map("user_id")
   expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("sessions")
 }
@@ -119,12 +162,12 @@ model VerificationToken {
 }
 
 model Patient {
-  id          String        @id @default(cuid())
-  userId      String        @unique @map("user_id")
-  dateOfBirth DateTime?     @map("date_of_birth") @db.Date
+  id          String    @id @default(cuid())
+  userId      String    @unique @map("user_id")
+  dateOfBirth DateTime? @map("date_of_birth")
   gender      String?
   phone       String?
-  createdAt   DateTime      @default(now()) @map("created_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
 
   user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   appointments    Appointment[]
@@ -134,13 +177,13 @@ model Patient {
 }
 
 model Doctor {
-  id              String         @id @default(cuid())
-  userId          String         @unique @map("user_id")
-  specialization  String
-  qualification   String?
-  consultationFee Decimal        @map("consultation_fee") @db.Decimal(10, 2)
-  bio             String?        @db.Text
-  experienceYears Int?           @map("experience_years")
+  id                   String          @id @default(cuid())
+  userId               String          @unique @map("user_id")
+  specialization       String
+  qualification        String?
+  experienceYears      Int?            @map("experience_years")
+  consultationFee      Decimal         @default(0) @map("consultation_fee") @db.Decimal(10, 2)
+  bio                  String?         @db.Text
   status               DoctorStatus    @default(PENDING)
   isDemo               Boolean         @default(false) @map("is_demo")
   waveWindowMinutes    Int             @default(30) @map("wave_window_minutes")
@@ -195,14 +238,20 @@ model Appointment {
   disruptedAt                   DateTime?         @map("disrupted_at")
   disruptionReason              String?           @map("disruption_reason") @db.Text
   delayNotifiedAt               DateTime?         @map("delay_notified_at")
+  cancellationReason            String?           @map("cancellation_reason") @db.Text
+  cancelledBy                   String?           @map("cancelled_by")
+  holdExpiresAt                 DateTime?         @map("hold_expires_at")
   createdAt                     DateTime          @default(now()) @map("created_at")
   updatedAt                     DateTime          @updatedAt @map("updated_at")
   cancelledAt                   DateTime?         @map("cancelled_at")
 
-  patient                     Patient       @relation(fields: [patientId], references: [id], onDelete: Restrict)
-  availability                Availability  @relation(fields: [availabilityId], references: [id], onDelete: Restrict)
-  rescheduledFromAvailability Availability? @relation("RescheduledFromAvailability", fields: [rescheduledFromAvailabilityId], references: [id], onDelete: SetNull)
-  wave                        Wave?         @relation(fields: [waveId], references: [id], onDelete: SetNull)
+  patient                     Patient                @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  availability                Availability           @relation(fields: [availabilityId], references: [id], onDelete: Restrict)
+  rescheduledFromAvailability Availability?          @relation("RescheduledFromAvailability", fields: [rescheduledFromAvailabilityId], references: [id], onDelete: SetNull)
+  wave                        Wave?                  @relation(fields: [waveId], references: [id], onDelete: SetNull)
+  payments                    Payment[]
+  refunds                     Refund[]
+  notificationDeliveries      NotificationDelivery[]
 
   @@index([patientId])
   @@index([availabilityId])
@@ -282,4 +331,98 @@ model WaitlistEntry {
   @@unique([patientId, doctorId])
   @@index([doctorId, earliestDate, latestDate])
   @@map("waitlist_entries")
+}
+
+model Payment {
+  id                String        @id @default(cuid())
+  appointmentId     String        @map("appointment_id")
+  provider          String
+  providerOrderId   String        @unique @map("provider_order_id")
+  providerPaymentId String?       @map("provider_payment_id")
+  paymentSessionId  String?       @map("payment_session_id")
+  amount            Decimal       @db.Decimal(10, 2)
+  currency          String        @default("INR")
+  status            PaymentStatus @default(CREATED)
+  method            String?
+  failureReason     String?       @map("failure_reason")
+  needsAttention    Boolean       @default(false) @map("needs_attention")
+  attentionReason   String?       @map("attention_reason")
+  expiresAt         DateTime      @map("expires_at")
+  paidAt            DateTime?     @map("paid_at")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+  refunds     Refund[]
+
+  @@index([appointmentId])
+  @@index([status, expiresAt])
+  @@map("payments")
+}
+
+model Refund {
+  id                String       @id @default(cuid())
+  paymentId         String       @map("payment_id")
+  appointmentId     String       @map("appointment_id")
+  providerRefundId  String       @unique @map("provider_refund_id")
+  providerRefundRef String?      @map("provider_refund_ref")
+  amount            Decimal      @db.Decimal(10, 2)
+  reason            RefundReason
+  note              String?
+  status            RefundStatus @default(REQUESTED)
+  failureReason     String?      @map("failure_reason")
+  attempts          Int          @default(0)
+  requestedAt       DateTime     @default(now()) @map("requested_at")
+  processedAt       DateTime?    @map("processed_at")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  payment     Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+
+  @@unique([paymentId, reason, appointmentId])
+  @@index([paymentId])
+  @@index([appointmentId])
+  @@index([status])
+  @@map("refunds")
+}
+
+model PaymentWebhookEvent {
+  id              String    @id @default(cuid())
+  provider        String
+  dedupeKey       String    @unique @map("dedupe_key")
+  eventType       String    @map("event_type")
+  providerOrderId String?   @map("provider_order_id")
+  payload         Json
+  receivedAt      DateTime  @default(now()) @map("received_at")
+  processedAt     DateTime? @map("processed_at")
+  status          String    @default("RECEIVED")
+  error           String?
+
+  @@index([provider, status])
+  @@map("payment_webhook_events")
+}
+
+model NotificationDelivery {
+  id            String              @id @default(cuid())
+  userId        String              @map("user_id")
+  appointmentId String?             @map("appointment_id")
+  channel       NotificationChannel
+  template      String
+  payload       Json
+  dedupeKey     String              @unique @map("dedupe_key")
+  scheduledFor  DateTime            @map("scheduled_for")
+  status        DeliveryStatus      @default(PENDING)
+  attempts      Int                 @default(0)
+  lastError     String?             @map("last_error")
+  sentAt        DateTime?           @map("sent_at")
+  lockedAt      DateTime?           @map("locked_at")
+  createdAt     DateTime            @default(now()) @map("created_at")
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+
+  @@index([status, scheduledFor])
+  @@index([appointmentId])
+  @@map("notification_deliveries")
 }
