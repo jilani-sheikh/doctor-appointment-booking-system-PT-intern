@@ -581,6 +581,7 @@ Setup an external cron monitor (e.g. [cron-job.org](https://cron-job.org), GitHu
   ```
 - **Expected Response:** HTTP 200 with JSON summary of processed holds, refunds, and email dispatches.
 
+
 ## WhatsApp patient notifications (Twilio Sandbox demo)
 
 WhatsApp is patient-only and disabled by default. Configure `WHATSAPP_PROVIDER=twilio`, `WHATSAPP_MODE=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM=whatsapp:+<sandbox-number>`, and `WHATSAPP_DEFAULT_COUNTRY_CODE=91` server-side only. Never use `NEXT_PUBLIC_` for these variables. The patient must explicitly opt in; opting out cancels pending WhatsApp deliveries. The UI displays the destination as `+91 ******1234`.
