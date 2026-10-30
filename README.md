@@ -502,4 +502,67 @@ Verify that the following environment variables are set in your Vercel Project S
 - `DIRECT_URL`
 - `AUTH_SECRET`
 - `AUTH_GOOGLE_ID`
-- `AUTH_GOOGLE_SECRET`
+- `AUTH_GOOGLE_SECRET`
+
+---
+
+## 💳 Payments, Refunds & Email Notifications Architecture
+
+Medrella integrates **Cashfree Payment Gateway (v2023-08-01)** and **Resend** for end-to-end outpatient consultation payments, idempotent partial/full refunds, and transactional email notifications.
+
+### ⚙️ Environment Variables Checklist (Vercel & Local)
+
+Add the following to your Vercel Project Settings (Settings > Environment Variables) or `.env.local`:
+
+| Variable | Description | Example / Recommended |
+|---|---|---|
+| `PAYMENTS_MODE` | Rollout mode (`disabled` for free booking bypass, `cashfree` for live gateway) | `disabled` (by default) or `cashfree` |
+| `CASHFREE_KEY_ID` | Cashfree App ID / Key ID (or `CASHFREE_APP_ID`) | `TEST1000...` |
+| `CASHFREE_SECRET` | Cashfree Secret Key (or `CASHFREE_SECRET_KEY`) | `cfsk_ma_...` |
+| `CASHFREE_ENV` | Gateway environment (`sandbox` or `production`) | `sandbox` |
+| `CASHFREE_API_VERSION` | Canonical API version for API and webhook payload matching | `2023-08-01` |
+| `RESEND_API_KEY` | Resend API key for transactional emails | `re_...` |
+| `RESEND_FROM_EMAIL` | Sender address (or `EMAIL_FROM`) | `onboarding@resend.dev` or verified domain |
+| `CRON_SECRET` | 32+ character random secret protecting `/api/cron/tick` | Random 32+ chars |
+| `APP_URL` | Canonical app URL for Cashfree return callbacks & links | `https://your-domain.vercel.app` |
+| `REMINDER_OFFSETS_MINUTES` | Reminder offsets before slot startTime (comma-separated minutes) | `1440,120` (24h and 2h) |
+
+### 🌐 Cashfree Merchant Dashboard Configuration
+
+1. Log in to your [Cashfree Dashboard](https://merchant.cashfree.com/merchants/login).
+2. Navigate to **Payment Gateway > Developers > Webhooks**.
+3. Click **Add Webhook Endpoint**:
+   - **Webhook URL:** `https://your-domain.vercel.app/api/webhooks/cashfree` (or ngrok/tunnel URL for local dev)
+   - **Payload Version:** Select **`2023-08-01`** (strictly aligns with `CASHFREE_API_VERSION = "2023-08-01"`).
+   - **Select Events to Subscribe:**
+     - `PAYMENT_SUCCESS_WEBHOOK`
+     - `PAYMENT_FAILED_WEBHOOK`
+     - `PAYMENT_USER_DROPPED_WEBHOOK`
+     - `REFUND_STATUS_WEBHOOK`
+     - `AUTO_REFUND_STATUS_WEBHOOK` (or `PAYMENT_AUTO_REFUND_WEBHOOK`)
+4. Save the endpoint.
+
+### ✉️ Resend Email Setup
+
+1. Create an API Key in [Resend](https://resend.com/api-keys).
+2. For testing/sandbox mode: Use `RESEND_FROM_EMAIL="onboarding@resend.dev"`. Note that Resend sandbox only sends emails to the account owner's email address.
+3. For production: Add and verify your custom sender domain in Resend DNS settings (DKIM, SPF) and set `RESEND_FROM_EMAIL="appointments@yourdomain.com"`.
+
+### ⏱️ External Cron Scheduler Setup (`/api/cron/tick`)
+
+Medrella's background worker endpoint `/api/cron/tick` handles:
+1. Expiring stale checkout holds (`PENDING_PAYMENT` > 10m old) and releasing the slots.
+2. Re-checking gateway status for pending payments.
+3. Polling and synchronizing pending refunds.
+4. Dispatching due transactional email notifications and reminders from the outbox table (`notification_deliveries`).
+
+Setup an external cron monitor (e.g. [cron-job.org](https://cron-job.org), GitHub Actions, or Vercel Cron):
+- **Schedule:** Every 5 to 10 minutes (`*/5 * * * *` or `*/10 * * * *`).
+- **HTTP Method:** `GET`
+- **URL:** `https://your-domain.vercel.app/api/cron/tick`
+- **HTTP Headers:**
+  ```text
+  Authorization: Bearer <CRON_SECRET>
+  ```
+- **Expected Response:** HTTP 200 with JSON summary of processed holds, refunds, and email dispatches.
+
