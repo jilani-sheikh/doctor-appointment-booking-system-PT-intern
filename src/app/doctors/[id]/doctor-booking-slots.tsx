@@ -19,7 +19,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Calendar, Loader2, Stethoscope, CheckCircle2, BellRing, BellOff } from "lucide-react";
+import { Calendar, Loader2, Stethoscope, CheckCircle2, BellRing, BellOff, ShieldCheck } from "lucide-react";
 import { formatTimeIST } from "@/lib/time";
 import type { Role } from "@/generated/prisma/enums";
 import type { SerializedPublicSlot } from "@/lib/serializers";
@@ -90,9 +90,26 @@ export function DoctorBookingSlots({
       });
 
       if (res.success) {
-        setIsDialogOpen(false);
-        toast.success(res.message);
-        router.push("/patient/appointments");
+        if ("requiresPayment" in res && res.requiresPayment && "paymentSessionId" in res && res.paymentSessionId) {
+          toast.loading("Redirecting to secure payment checkout...", { id: "checkout" });
+          try {
+            const { load } = await import("@cashfreepayments/cashfree-js");
+            const cashfree = await load({
+              mode: process.env.NEXT_PUBLIC_CASHFREE_ENV === "production" ? "production" : "sandbox",
+            });
+            await cashfree.checkout({
+              paymentSessionId: res.paymentSessionId as string,
+              redirectTarget: "_self",
+            });
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : "Failed to launch payment gateway.";
+            toast.error(message, { id: "checkout" });
+          }
+        } else {
+          setIsDialogOpen(false);
+          toast.success(res.message);
+          router.push("/patient/appointments");
+        }
       } else {
         toast.error(res.error || "Failed to book appointment.");
       }
@@ -386,6 +403,18 @@ export function DoctorBookingSlots({
                   {reason.length}/500
                 </span>
               </div>
+
+              {/* Cancellation & Refund Policy Notice */}
+              <div className="rounded-lg bg-muted/40 p-3 text-[11px] text-muted-foreground border border-border/50 space-y-1">
+                <div className="font-semibold text-foreground flex items-center gap-1.5">
+                  <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+                  <span>Cancellation & Refund Policy</span>
+                </div>
+                <p>• 100% refund if cancelled at least 24 hours prior to appointment.</p>
+                <p>• 50% refund if cancelled between 2 and 24 hours prior.</p>
+                <p>• Non-refundable within 2 hours of scheduled start time.</p>
+                <p>• Slot is held provisionally for 15 minutes to complete online checkout.</p>
+              </div>
             </div>
           )}
 
@@ -407,12 +436,14 @@ export function DoctorBookingSlots({
               {isPending ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Confirming...
+                  {consultationFee > 0 ? "Preparing Checkout..." : "Confirming..."}
                 </>
               ) : (
                 <>
                   <CheckCircle2 className="h-4 w-4" />
-                  Lock In Booking
+                  {consultationFee > 0
+                    ? `Pay ₹${consultationFee.toLocaleString("en-IN")} & Book`
+                    : "Lock In Booking"}
                 </>
               )}
             </Button>

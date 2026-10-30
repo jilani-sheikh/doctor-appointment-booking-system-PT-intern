@@ -77,12 +77,20 @@ export function Navbar({
 
           {/* Role-specific Desktop Navigation */}
           {navUser?.role === "PATIENT" && (
-            <Link
-              href="/patient/appointments"
-              className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
-            >
-              Appointments
-            </Link>
+            <>
+              <Link
+                href="/patient/appointments"
+                className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+              >
+                Appointments
+              </Link>
+              <Link
+                href="/patient/payments"
+                className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+              >
+                Payments
+              </Link>
+            </>
           )}
 
           {navUser?.role === "DOCTOR" && (
@@ -130,6 +138,12 @@ export function Navbar({
               >
                 Doctor Verifications
               </Link>
+              <Link
+                href="/admin/payments"
+                className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+              >
+                Payments
+              </Link>
             </>
           )}
         </nav>
@@ -174,12 +188,20 @@ export function Navbar({
                   ))}
 
                   {navUser?.role === "PATIENT" && (
-                    <Link
-                      href="/patient/appointments"
-                      className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
-                    >
-                      Appointments
-                    </Link>
+                    <>
+                      <Link
+                        href="/patient/appointments"
+                        className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
+                      >
+                        Appointments
+                      </Link>
+                      <Link
+                        href="/patient/payments"
+                        className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
+                      >
+                        Payments
+                      </Link>
+                    </>
                   )}
 
                   {navUser?.role === "DOCTOR" && (
@@ -227,6 +249,12 @@ export function Navbar({
                         className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
                       >
                         Doctor Verifications
+                      </Link>
+                      <Link
+                        href="/admin/payments"
+                        className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
+                      >
+                        Payments
                       </Link>
                     </>
                   )}
