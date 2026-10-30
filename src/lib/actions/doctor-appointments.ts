@@ -4,48 +4,57 @@ import { requireRole } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
   Role,
-  DoctorStatus,
   AppointmentStatus,
   NotificationType,
-  Prisma,
+  PaymentStatus,
+  RefundReason,
 } from "@/generated/prisma/client";
 import {
-  canDoctorNoShow,
   isValidTransition,
-  isTerminalStatus,
+  canDoctorNoShow,
 } from "@/lib/appointment-status";
 import { releaseSlot, notifyWaitlistAfterSlotRelease } from "@/lib/slots";
 import { createNotification } from "@/lib/notifications";
+import { enqueueEmail } from "@/lib/notifications/index";
+import { syncAppointmentReminders } from "@/lib/notifications/reminders";
+import { requestRefund } from "@/lib/payments/service";
 import { formatDateTimeIST } from "@/lib/time";
 import { revalidatePath } from "next/cache";
 
-type AllowedDoctorTransition = "CANCELLED" | "COMPLETED" | "NO_SHOW";
-
 /**
- * Updates an appointment's status according to the clinical transition rules.
+ * Transitions appointment status for doctor workflows.
+ *
  * Enforces:
- * - Approved doctor authorization
- * - Strict doctor ownership check
- * - Valid transition matrix via single source of truth (lib/appointment-status.ts)
+ * - Doctor authentication and ownership of the appointment
+ * - State machine validity via isValidTransition
+ * - Timing constraint for NO_SHOW via canDoctorNoShow (>= 15 mins after start)
  * - Releases slots using shared releaseSlot helper on cancellation
- * - Triggers APPOINTMENT_CANCELLED notifications
+ * - Triggers 100% refund if a payment was attached
+ * - Synchronizes reminders and sends patient notifications
  */
 export async function updateDoctorAppointmentStatusAction(
   appointmentId: string,
-  targetStatus: AllowedDoctorTransition
+  targetStatus: "CANCELLED" | "COMPLETED" | "NO_SHOW"
 ) {
   const user = await requireRole(Role.DOCTOR);
   const doctor = user.doctor;
 
-  if (!doctor || doctor.status !== DoctorStatus.APPROVED) {
-    return { success: false, error: "Only approved doctors can manage consultations." };
+  if (!doctor) {
+    return { success: false, error: "Doctor profile not found." };
   }
 
   const appointment = await db.appointment.findUnique({
     where: { id: appointmentId },
     include: {
       availability: true,
-      patient: { select: { userId: true, user: { select: { name: true } } } },
+      patient: {
+        include: { user: { select: { id: true, name: true, email: true } } },
+      },
+      payments: {
+        where: { status: PaymentStatus.PAID },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      },
     },
   });
 
@@ -53,19 +62,11 @@ export async function updateDoctorAppointmentStatusAction(
     return { success: false, error: "Appointment not found or unauthorized." };
   }
 
-  const current = appointment.status;
   const now = new Date();
+  const current = appointment.status;
 
-  // Terminal state check
-  if (isTerminalStatus(current)) {
-    return {
-      success: false,
-      error: `Appointment is already in ${current.toLowerCase()} status and cannot be changed.`,
-    };
-  }
-
-  // Validate state transitions via centralized domain rules
-  if (!isValidTransition(current, targetStatus as AppointmentStatus, Role.DOCTOR)) {
+  // Validate state machine transition
+  if (!isValidTransition(current, targetStatus, Role.DOCTOR)) {
     return {
       success: false,
       error: `Transition from ${current} to ${targetStatus} is not permitted for doctor role.`,
@@ -86,9 +87,10 @@ export async function updateDoctorAppointmentStatusAction(
   try {
     let newlyFreedSlot = false;
     let freedSlotStartTime: Date = appointment.availability.startTime;
+    let refundSummary: string | null = null;
 
     if (targetStatus === "CANCELLED") {
-      // In a transaction: mark cancelled, clear waveId, and free slot using releaseSlot helper
+      // In a transaction: mark cancelled, clear waveId, free slot, sync reminders
       await db.$transaction(
         async (tx) => {
           await tx.appointment.update({
@@ -96,6 +98,8 @@ export async function updateDoctorAppointmentStatusAction(
             data: {
               status: AppointmentStatus.CANCELLED,
               cancelledAt: now,
+              cancelledBy: "DOCTOR",
+              cancellationReason: "Cancelled by practitioner",
               waveId: null,
             },
           });
@@ -103,18 +107,56 @@ export async function updateDoctorAppointmentStatusAction(
           const release = await releaseSlot(tx, appointment.availabilityId);
           newlyFreedSlot = release.newlyAvailable;
           freedSlotStartTime = release.startTime;
+
+          await syncAppointmentReminders(tx, {
+            appointmentId,
+            userId: appointment.patient.userId,
+            slotStartTime: appointment.availability.startTime,
+            status: AppointmentStatus.CANCELLED,
+          });
         },
         { maxWait: 10000, timeout: 20000 }
       );
 
+      // Refund 100% for doctor cancellations
+      const paidPayment = appointment.payments[0];
+      if (paidPayment) {
+        const refundRes = await requestRefund({
+          paymentId: paidPayment.id,
+          appointmentId,
+          reason: RefundReason.DOCTOR_CANCELLED,
+          note: "Doctor cancelled appointment - 100% full refund issued",
+        });
+
+        if (refundRes.amountRupees > 0) {
+          refundSummary = `A full refund of ₹${refundRes.amountRupees} has been initiated to your original payment method.`;
+        }
+      }
+
       // Notify patient of doctor cancellation
-      const slotTimeFormatted = formatDateTimeIST(appointment.availability.startTime);
+      const slotTimeFormatted = `${formatDateTimeIST(appointment.availability.startTime)} IST`;
       await createNotification({
         userId: appointment.patient.userId,
         type: NotificationType.APPOINTMENT_CANCELLED,
         title: "Appointment Cancelled by Practitioner",
-        body: `Dr. ${user.name ?? "Your doctor"} has cancelled your consultation scheduled for ${slotTimeFormatted}.`,
+        body: `Dr. ${user.name ?? "Your doctor"} has cancelled your consultation scheduled for ${slotTimeFormatted}.${
+          refundSummary ? ` ${refundSummary}` : ""
+        }`,
         href: "/patient/appointments",
+      });
+
+      // Outbox email
+      await enqueueEmail(db, {
+        userId: appointment.patient.userId,
+        appointmentId,
+        template: "appointment_cancelled",
+        payload: {
+          doctorName: user.name || "Doctor",
+          startTime: appointment.availability.startTime.toISOString(),
+          cancelledBy: "DOCTOR",
+          refundSummary,
+        },
+        dedupeKey: `email:doctor_cancelled:${appointmentId}`,
       });
 
       // Notify waitlist if slot became available
@@ -122,19 +164,37 @@ export async function updateDoctorAppointmentStatusAction(
         await notifyWaitlistAfterSlotRelease(doctor.id, freedSlotStartTime);
       }
     } else if (targetStatus === "COMPLETED") {
-      await db.appointment.update({
-        where: { id: appointmentId },
-        data: {
+      await db.$transaction(async (tx) => {
+        await tx.appointment.update({
+          where: { id: appointmentId },
+          data: {
+            status: AppointmentStatus.COMPLETED,
+            actualEndAt: now,
+          },
+        });
+
+        await syncAppointmentReminders(tx, {
+          appointmentId,
+          userId: appointment.patient.userId,
+          slotStartTime: appointment.availability.startTime,
           status: AppointmentStatus.COMPLETED,
-          actualEndAt: now,
-        },
+        });
       });
     } else if (targetStatus === "NO_SHOW") {
-      await db.appointment.update({
-        where: { id: appointmentId },
-        data: {
+      await db.$transaction(async (tx) => {
+        await tx.appointment.update({
+          where: { id: appointmentId },
+          data: {
+            status: AppointmentStatus.NO_SHOW,
+          },
+        });
+
+        await syncAppointmentReminders(tx, {
+          appointmentId,
+          userId: appointment.patient.userId,
+          slotStartTime: appointment.availability.startTime,
           status: AppointmentStatus.NO_SHOW,
-        },
+        });
       });
     }
 
@@ -143,30 +203,14 @@ export async function updateDoctorAppointmentStatusAction(
     revalidatePath("/doctor/dashboard");
     revalidatePath("/patient/appointments");
     revalidatePath("/patient/dashboard");
-    revalidatePath(`/doctors/${doctor.id}`);
+    revalidatePath("/patient/payments");
 
     return {
       success: true,
-      message: `Appointment status updated to ${targetStatus.toLowerCase()}.`,
+      message: `Appointment marked as ${targetStatus.toLowerCase()}.${refundSummary ? ` ${refundSummary}` : ""}`,
     };
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === "P2025") {
-        return {
-          success: false,
-          error: "The appointment or slot could not be found.",
-        };
-      }
-      if (error.code === "P2028") {
-        console.error("[updateDoctorAppointmentStatusAction] Prisma transaction API error (P2028):", error);
-        return {
-          success: false,
-          error: "Operation timed out or connection was interrupted. Please try again.",
-        };
-      }
-    }
-
-    console.error("[updateDoctorAppointmentStatusAction] Error:", error);
+    console.error("[updateDoctorAppointmentStatusAction] Error updating status:", error);
     return {
       success: false,
       error: "Failed to update appointment status. Please try again.",

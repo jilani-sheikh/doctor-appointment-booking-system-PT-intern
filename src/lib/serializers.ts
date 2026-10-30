@@ -153,6 +153,10 @@ export interface SerializedPatientAppointment {
     qualification?: string | null;
     consultationFee: number;
   };
+  holdExpiresAt?: string | null;
+  paymentSessionId?: string | null;
+  providerOrderId?: string | null;
+  paymentStatus?: string | null;
 }
 
 export function toPatientAppointmentDto(
@@ -172,6 +176,13 @@ export function toPatientAppointmentDto(
       windowEnd: Date;
       status: WaveStatus;
     } | null;
+    holdExpiresAt?: Date | null;
+    payments?: Array<{
+      id: string;
+      providerOrderId: string;
+      paymentSessionId?: string | null;
+      status: string;
+    }>;
     availability: {
       startTime: Date;
       endTime: Date;
@@ -227,6 +238,8 @@ export function toPatientAppointmentDto(
       ? formatWaveArrivalWindowIST(appt.wave.windowStart, appt.wave.windowEnd)
       : null;
 
+  const latestPayment = appt.payments && appt.payments.length > 0 ? appt.payments[0] : undefined;
+
   return {
     id: appt.id,
     status: appt.status,
@@ -247,6 +260,10 @@ export function toPatientAppointmentDto(
     estimatedStart: estimate?.expectedStart.toISOString() ?? null,
     estimatedDelayMinutes: estimate?.roundedDelayMinutes ?? null,
     queuePosition: estimate?.queuePosition ?? null,
+    holdExpiresAt: appt.holdExpiresAt ? appt.holdExpiresAt.toISOString() : null,
+    paymentSessionId: latestPayment?.paymentSessionId ?? null,
+    providerOrderId: latestPayment?.providerOrderId ?? null,
+    paymentStatus: latestPayment?.status ?? null,
     doctor: {
       id: appt.availability.doctor.id,
       name: appt.availability.doctor.user.name ?? "Practitioner",
@@ -663,3 +680,154 @@ export function toPublicSlotDto(slot: {
     endTime: slot.endTime.toISOString(),
   };
 }
+
+/**
+ * Serializable DTO for Refund items.
+ */
+export interface SerializedRefundItem {
+  id: string;
+  providerRefundId: string;
+  providerRefundRef: string | null;
+  amount: number;
+  reason: string;
+  note: string | null;
+  status: string;
+  failureReason: string | null;
+  attempts: number;
+  requestedAt: string;
+  processedAt: string | null;
+}
+
+export function toRefundDto(refund: {
+  id: string;
+  providerRefundId: string;
+  providerRefundRef?: string | null;
+  amount: Prisma.Decimal | number | string;
+  reason: string;
+  note?: string | null;
+  status: string;
+  failureReason?: string | null;
+  attempts: number;
+  requestedAt: Date;
+  processedAt?: Date | null;
+}): SerializedRefundItem {
+  return {
+    id: refund.id,
+    providerRefundId: refund.providerRefundId,
+    providerRefundRef: refund.providerRefundRef ?? null,
+    amount: Number(refund.amount),
+    reason: refund.reason,
+    note: refund.note ?? null,
+    status: refund.status,
+    failureReason: refund.failureReason ?? null,
+    attempts: refund.attempts,
+    requestedAt: refund.requestedAt.toISOString(),
+    processedAt: refund.processedAt ? refund.processedAt.toISOString() : null,
+  };
+}
+
+/**
+ * Serializable DTO for Payment History, Receipts, and Admin Oversight.
+ */
+export interface SerializedPaymentItem {
+  id: string;
+  appointmentId: string;
+  provider: string;
+  providerOrderId: string;
+  providerPaymentId: string | null;
+  paymentSessionId: string | null;
+  amount: number;
+  currency: string;
+  status: string;
+  method: string | null;
+  failureReason: string | null;
+  needsAttention: boolean;
+  attentionReason: string | null;
+  expiresAt: string;
+  paidAt: string | null;
+  createdAt: string;
+  doctorName: string;
+  doctorSpecialization: string;
+  slotStartTime: string;
+  totalRefunded: number;
+  refundStatus: string | null;
+  refunds: SerializedRefundItem[];
+}
+
+export function toPaymentDto(payment: {
+  id: string;
+  appointmentId: string;
+  provider: string;
+  providerOrderId: string;
+  providerPaymentId?: string | null;
+  paymentSessionId?: string | null;
+  amount: Prisma.Decimal | number | string;
+  currency: string;
+  status: string;
+  method?: string | null;
+  failureReason?: string | null;
+  needsAttention: boolean;
+  attentionReason?: string | null;
+  expiresAt: Date;
+  paidAt?: Date | null;
+  createdAt: Date;
+  appointment?: {
+    availability?: {
+      startTime: Date;
+      doctor?: {
+        specialization: string;
+        user?: { name?: string | null } | null;
+      } | null;
+    } | null;
+  } | null;
+  refunds?: Array<Parameters<typeof toRefundDto>[0]>;
+}): SerializedPaymentItem {
+  const refunds = payment.refunds ? payment.refunds.map(toRefundDto) : [];
+  const successfulRefunds = refunds.filter((r) => r.status === "SUCCESS");
+  const pendingRefunds = refunds.filter((r) => r.status === "PENDING" || r.status === "REQUESTED");
+  const totalRefunded = successfulRefunds.reduce((sum, r) => sum + r.amount, 0);
+
+  let refundStatus: string | null = null;
+  const paymentAmountNum = Number(payment.amount);
+  if (totalRefunded >= paymentAmountNum && paymentAmountNum > 0) {
+    refundStatus = "Refunded";
+  } else if (totalRefunded > 0) {
+    refundStatus = "Partially Refunded";
+  } else if (pendingRefunds.length > 0) {
+    refundStatus = "Refund Pending";
+  }
+
+  const doctorName =
+    payment.appointment?.availability?.doctor?.user?.name ?? "Practitioner";
+  const doctorSpecialization =
+    payment.appointment?.availability?.doctor?.specialization ?? "General";
+  const slotStartTime = payment.appointment?.availability?.startTime
+    ? payment.appointment.availability.startTime.toISOString()
+    : payment.createdAt.toISOString();
+
+  return {
+    id: payment.id,
+    appointmentId: payment.appointmentId,
+    provider: payment.provider,
+    providerOrderId: payment.providerOrderId,
+    providerPaymentId: payment.providerPaymentId ?? null,
+    paymentSessionId: payment.paymentSessionId ?? null,
+    amount: paymentAmountNum,
+    currency: payment.currency,
+    status: payment.status,
+    method: payment.method ?? null,
+    failureReason: payment.failureReason ?? null,
+    needsAttention: payment.needsAttention,
+    attentionReason: payment.attentionReason ?? null,
+    expiresAt: payment.expiresAt.toISOString(),
+    paidAt: payment.paidAt ? payment.paidAt.toISOString() : null,
+    createdAt: payment.createdAt.toISOString(),
+    doctorName,
+    doctorSpecialization,
+    slotStartTime,
+    totalRefunded,
+    refundStatus,
+    refunds,
+  };
+}
+

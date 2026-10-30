@@ -9,6 +9,8 @@ import {
   SlotStatus,
   AppointmentStatus,
   NotificationType,
+  PaymentStatus,
+  RefundReason,
   WaveStatus,
   VisitStream,
   Prisma,
@@ -16,25 +18,34 @@ import {
 import { canPatientCancel } from "@/lib/appointment-status";
 import { releaseSlot, notifyWaitlistAfterSlotRelease } from "@/lib/slots";
 import { createNotification } from "@/lib/notifications";
+import { enqueueEmail } from "@/lib/notifications/index";
+import { syncAppointmentReminders } from "@/lib/notifications/reminders";
 import { formatDateTimeIST, formatDateIST, getISTDateString, getISTDayRangeUTC } from "@/lib/time";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
 import {
   MAX_ACTIVE_UPCOMING_APPOINTMENTS_PER_PATIENT,
   MAX_ACTIVE_APPOINTMENTS_PER_DOCTOR_PER_DAY,
+  MAX_SIMULTANEOUS_HOLDS_PER_PATIENT,
 } from "@/lib/constants";
+import { getPaymentsMode, isCashfreeConfigured } from "@/lib/env";
+import { bookWithPaymentHold, requestRefund } from "@/lib/payments/service";
 import { revalidatePath } from "next/cache";
 
 /**
- * Books an appointment for a patient in a single atomic transaction.
- * Enforces:
+ * Books an appointment for a patient.
+ *
+ * Rules:
  * - Patient authentication & completed patient profile
- * - Abuse guards: <= 3 active upcoming bookings per patient, <= 1 active booking per doctor per day
+ * - Abuse guards:
+ *   1. <= 3 active upcoming bookings/holds per patient
+ *   2. <= 1 active booking/hold per doctor per day (IST)
+ *   3. <= 2 simultaneous PENDING_PAYMENT checkout holds per patient
  * - Slot must be AVAILABLE and start > now + 1 hour
  * - Doctor must be APPROVED
- * - Never trusts client-supplied IDs
- * - Auto-confirms appointment immediately with status CONFIRMED
- * - Joins published wave if capacity remains and window has not passed
- * - Handles race conditions and catches partial unique index collisions (P2002)
+ * - When PAYMENTS_MODE === "cashfree" and fee > 0:
+ *   Creates provisional hold (PENDING_PAYMENT) and initiates Cashfree order session.
+ * - When PAYMENTS_MODE === "disabled" or fee === 0:
+ *   Auto-confirms appointment immediately with status CONFIRMED directly.
  */
 export async function bookAppointmentAction(input: BookAppointmentInput) {
   const user = await requireRole(Role.PATIENT);
@@ -68,6 +79,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
           id: true,
           status: true,
           specialization: true,
+          consultationFee: true,
           user: { select: { id: true, name: true } },
         },
       },
@@ -89,7 +101,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
     };
   }
 
-  // Abuse guard 1: Limit patient to at most 3 active upcoming appointments (CONFIRMED/CHECKED_IN, slot in future)
+  // Abuse guard 1: Limit patient to at most 3 active upcoming appointments (CONFIRMED/CHECKED_IN/PENDING_PAYMENT, slot in future)
   const activeUpcomingCount = await db.appointment.count({
     where: {
       patientId,
@@ -101,6 +113,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
           AppointmentStatus.CONFIRMED,
           AppointmentStatus.CHECKED_IN,
           AppointmentStatus.PENDING,
+          AppointmentStatus.PENDING_PAYMENT,
         ],
       },
     },
@@ -109,7 +122,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
   if (activeUpcomingCount >= MAX_ACTIVE_UPCOMING_APPOINTMENTS_PER_PATIENT) {
     return {
       success: false,
-      error: `You already have ${activeUpcomingCount} active upcoming consultations (maximum allowed is ${MAX_ACTIVE_UPCOMING_APPOINTMENTS_PER_PATIENT}). Please complete or cancel an existing consultation before booking a new one.`,
+      error: `You already have ${activeUpcomingCount} active upcoming consultations or checkout holds (maximum allowed is ${MAX_ACTIVE_UPCOMING_APPOINTMENTS_PER_PATIENT}). Please complete or cancel an existing consultation before booking a new one.`,
     };
   }
 
@@ -130,6 +143,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
           AppointmentStatus.CHECKED_IN,
           AppointmentStatus.IN_CONSULTATION,
           AppointmentStatus.PENDING,
+          AppointmentStatus.PENDING_PAYMENT,
         ],
       },
     },
@@ -142,6 +156,66 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
     };
   }
 
+  // Abuse guard 3: At most 2 simultaneous active checkout holds per patient
+  const activeHoldsCount = await db.appointment.count({
+    where: {
+      patientId,
+      status: AppointmentStatus.PENDING_PAYMENT,
+      holdExpiresAt: { gt: now },
+    },
+  });
+
+  if (activeHoldsCount >= MAX_SIMULTANEOUS_HOLDS_PER_PATIENT) {
+    return {
+      success: false,
+      error: `You have reached the limit of ${MAX_SIMULTANEOUS_HOLDS_PER_PATIENT} active checkout holds. Please complete payment or cancel your pending hold before reserving another slot.`,
+    };
+  }
+
+  const feeNumber = Number(slot.doctor.consultationFee);
+  const paymentsMode = getPaymentsMode();
+
+  // If online payments are required (mode === "cashfree" and fee > 0)
+  if (paymentsMode === "cashfree" && feeNumber > 0) {
+    if (!isCashfreeConfigured()) {
+      console.error(
+        "[bookAppointmentAction] Online payments are active (PAYMENTS_MODE=cashfree), but CASHFREE_KEY_ID or CASHFREE_SECRET is not configured."
+      );
+      return {
+        success: false,
+        error: "Online payments are not configured.",
+      };
+    }
+
+    const holdResult = await bookWithPaymentHold({
+      patientId,
+      userId: user.id,
+      patientName: user.name || "Patient",
+      patientEmail: user.email,
+      patientPhone: user.patient.phone,
+      availabilityId,
+      reason,
+      stream,
+    });
+
+    if (!holdResult.success) {
+      return {
+        success: false,
+        error: holdResult.error || "Unable to reserve slot for payment.",
+      };
+    }
+
+    return {
+      success: true,
+      requiresPayment: true,
+      orderId: holdResult.orderId,
+      paymentSessionId: holdResult.paymentSessionId,
+      appointmentId: holdResult.appointmentId,
+      message: "Provisional hold created. Please complete payment.",
+    };
+  }
+
+  // Fallback / Free flow: instant confirmation (disabled mode or fee == 0)
   try {
     const appointment = await db.$transaction(
       async (tx) => {
@@ -200,41 +274,59 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
           },
         });
 
+        // 4. Synchronize reminders inside transaction
+        await syncAppointmentReminders(tx, {
+          appointmentId: appt.id,
+          userId: user.id,
+          slotStartTime: slot.startTime,
+          status: AppointmentStatus.CONFIRMED,
+        });
+
         return { appt, waveIdToAssign, assignedWaveArrivalWindow };
       },
       { maxWait: 10000, timeout: 20000 }
     );
 
-    // Notifications dispatched post-commit (catch and log so failed notification never fails booking)
+    // Notifications dispatched post-commit
     const slotTimeFormatted = formatDateTimeIST(slot.startTime);
     const doctorName = slot.doctor.user.name ?? "Practitioner";
     const arrivalNote = appointment.assignedWaveArrivalWindow
-      ? ` Arrival window: ${appointment.assignedWaveArrivalWindow}.`
+      ? ` Arrival window: ${appointment.assignedWaveArrivalWindow} IST.`
       : "";
 
     try {
-      // 1. Patient notification: APPOINTMENT_CONFIRMED
       await createNotification({
         userId: user.id,
         type: NotificationType.APPOINTMENT_CONFIRMED,
         title: "Your appointment is booked",
-        body: `Your consultation with Dr. ${doctorName} on ${slotTimeFormatted} is confirmed.${arrivalNote}`,
+        body: `Your consultation with Dr. ${doctorName} on ${slotTimeFormatted} IST is confirmed.${arrivalNote}`,
         href: "/patient/appointments",
       });
 
-      // 2. Doctor notification: GENERAL linking to /doctor/queue
       await createNotification({
         userId: slot.doctor.user.id,
         type: NotificationType.GENERAL,
         title: "New Booking Confirmed",
-        body: `New booking: ${user.name ?? "Patient"}, ${slotTimeFormatted}`,
+        body: `New booking: ${user.name ?? "Patient"}, ${slotTimeFormatted} IST`,
         href: "/doctor/queue",
+      });
+
+      await enqueueEmail(db, {
+        userId: user.id,
+        appointmentId: appointment.appt.id,
+        template: "booking_confirmed",
+        payload: {
+          doctorName,
+          specialization: slot.doctor.specialization,
+          startTime: slot.startTime.toISOString(),
+          arrivalWindow: appointment.assignedWaveArrivalWindow,
+        },
+        dedupeKey: `email:booking_confirmed:${appointment.appt.id}`,
       });
     } catch (notifError) {
       console.error("[bookAppointmentAction] Error sending post-commit notifications:", notifError);
     }
 
-    // Cache revalidation for fresh queue, appointments, waves, and dashboard views
     revalidatePath(`/doctors/${slot.doctorId}`);
     revalidatePath("/patient/appointments");
     revalidatePath("/patient/dashboard");
@@ -285,15 +377,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
 
 /**
  * Cancels a patient's appointment.
- *
- * Rules (Promt5.md & Amendment 2 & 4):
- * - Enforces canPatientCancel (PENDING or CONFIRMED, >= 2 hrs before start, or anytime if disrupted; never once CHECKED_IN).
- * - In a single transaction:
- *   (a) Updates appointment to CANCELLED with cancelledAt timestamp
- *   (b) Releases availability slot back using releaseSlot shared helper (checks DoctorTimeOff)
- * - Post-commit:
- *   - Notifies waitlist patients if slot returns to AVAILABLE
- *   - Creates APPOINTMENT_CANCELLED notifications for doctor and patient
+ * Enforces cancellation window rules, frees slot using releaseSlot, and issues refund if paid.
  */
 export async function cancelPatientAppointmentAction(appointmentId: string) {
   const user = await requireRole(Role.PATIENT);
@@ -311,6 +395,11 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
             include: { user: { select: { id: true, name: true } } },
           },
         },
+      },
+      payments: {
+        where: { status: PaymentStatus.PAID },
+        orderBy: { createdAt: "desc" },
+        take: 1,
       },
     },
   });
@@ -336,6 +425,7 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
   }
 
   const doctorId = appointment.availability.doctorId;
+  const paidPayment = appointment.payments[0];
 
   try {
     const result = await db.$transaction(
@@ -346,6 +436,8 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
           data: {
             status: AppointmentStatus.CANCELLED,
             cancelledAt: new Date(),
+            cancelledBy: "PATIENT",
+            cancellationReason: "Cancelled by patient",
             waveId: null,
           },
         });
@@ -353,30 +445,70 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
         // 2. Free availability slot using shared releaseSlot helper
         const slotRelease = await releaseSlot(tx, appointment.availabilityId);
 
+        // 3. Sync reminders to cancelled
+        await syncAppointmentReminders(tx, {
+          appointmentId,
+          userId: user.id,
+          slotStartTime: appointment.availability.startTime,
+          status: AppointmentStatus.CANCELLED,
+        });
+
         return { slotRelease };
       },
       { maxWait: 10000, timeout: 20000 }
     );
 
-    const slotTimeFormatted = formatDateTimeIST(appointment.availability.startTime);
+    // 4. Handle refund if appointment had a paid payment
+    let refundSummary: string | null = null;
+    if (paidPayment) {
+      const refundRes = await requestRefund({
+        paymentId: paidPayment.id,
+        appointmentId,
+        reason: RefundReason.PATIENT_CANCELLED,
+        note: "Patient initiated cancellation",
+      });
+
+      if (refundRes.amountRupees > 0) {
+        refundSummary = `A refund of ₹${refundRes.amountRupees} has been initiated (${refundRes.status.toLowerCase()}).`;
+      } else {
+        refundSummary = "This cancellation was not eligible for a refund under policy terms.";
+      }
+    }
+
+    const slotTimeFormatted = `${formatDateTimeIST(appointment.availability.startTime)} IST`;
     const doctorName = appointment.availability.doctor.user.name ?? "Practitioner";
 
-    // Notify patient
+    // In-app Notifications
     await createNotification({
       userId: user.id,
       type: NotificationType.APPOINTMENT_CANCELLED,
       title: "Appointment Cancelled",
-      body: `Your consultation with Dr. ${doctorName} on ${slotTimeFormatted} has been cancelled.`,
+      body: `Your consultation with Dr. ${doctorName} on ${slotTimeFormatted} has been cancelled.${
+        refundSummary ? ` ${refundSummary}` : ""
+      }`,
       href: "/patient/appointments",
     });
 
-    // Notify doctor
     await createNotification({
       userId: appointment.availability.doctor.user.id,
       type: NotificationType.APPOINTMENT_CANCELLED,
       title: "Patient Cancelled Appointment",
       body: `${user.name ?? "A patient"} has cancelled their consultation scheduled for ${slotTimeFormatted}. The slot is now freed.`,
       href: "/doctor/appointments",
+    });
+
+    // Outbox email
+    await enqueueEmail(db, {
+      userId: user.id,
+      appointmentId,
+      template: "appointment_cancelled",
+      payload: {
+        doctorName,
+        startTime: appointment.availability.startTime.toISOString(),
+        cancelledBy: "PATIENT",
+        refundSummary,
+      },
+      dedupeKey: `email:appointment_cancelled:${appointmentId}`,
     });
 
     // Notify waitlist if slot became AVAILABLE
@@ -386,13 +518,14 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
 
     revalidatePath("/patient/appointments");
     revalidatePath("/patient/dashboard");
+    revalidatePath("/patient/payments");
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/dashboard");
     revalidatePath(`/doctors/${doctorId}`);
 
     return {
       success: true,
-      message: "Appointment successfully cancelled and consultation slot freed.",
+      message: `Appointment successfully cancelled.${refundSummary ? ` ${refundSummary}` : ""}`,
     };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
