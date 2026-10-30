@@ -20,7 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Calendar, Loader2, Stethoscope, CheckCircle2, BellRing, BellOff, ShieldCheck } from "lucide-react";
-import { formatTimeIST } from "@/lib/time";
+import { formatSlotRange } from "@/lib/time";
 import type { Role } from "@/generated/prisma/enums";
 import type { SerializedPublicSlot } from "@/lib/serializers";
 export type { SerializedPublicSlot };
@@ -296,19 +296,22 @@ export function DoctorBookingSlots({
               </CardHeader>
 
               <CardContent className="p-4">
-                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 gap-2.5">
                   {daySlots.map((slot) => {
-                    const startUtc = new Date(slot.startTime);
+                    const range = formatSlotRange(slot.startTime, slot.endTime);
+                    const ariaLabel = `Book ${range.replace(" - ", " to ")} on ${dateLabel}`;
 
                     return (
                       <button
                         key={slot.id}
                         type="button"
+                        aria-label={ariaLabel}
                         onClick={() => handleSlotClick(dateLabel, slot)}
-                        className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-border/80 bg-card hover:bg-primary/5 hover:border-primary/50 transition-all text-xs font-medium text-foreground cursor-pointer group shadow-2xs hover:shadow-xs"
+                        disabled={isPending}
+                        className="flex items-center justify-center py-2.5 px-3 rounded-lg border border-border/80 bg-card hover:bg-primary/5 hover:border-primary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 transition-all text-xs font-medium text-foreground cursor-pointer group shadow-2xs hover:shadow-xs disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                       >
-                        <span className="group-hover:text-primary font-semibold">
-                          {formatTimeIST(startUtc)}
+                        <span className="group-hover:text-primary font-semibold whitespace-nowrap">
+                          {range}
                         </span>
                       </button>
                     );
@@ -347,7 +350,7 @@ export function DoctorBookingSlots({
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Time (IST):</span>
                   <span className="font-medium text-foreground">
-                    {formatTimeIST(new Date(selectedSlot.startTime))} - {formatTimeIST(new Date(selectedSlot.endTime))}
+                    {formatSlotRange(selectedSlot.startTime, selectedSlot.endTime)}
                   </span>
                 </div>
                 <div className="flex justify-between border-t border-border/60 pt-2 font-semibold">

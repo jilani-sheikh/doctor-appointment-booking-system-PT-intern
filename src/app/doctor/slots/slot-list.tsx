@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Ban, CheckCircle2, Clock, Trash2, Calendar } from "lucide-react";
-import { formatTimeIST } from "@/lib/time";
+import { formatSlotRange } from "@/lib/time";
 import type { SerializedSlot } from "@/lib/serializers";
 export type { SerializedSlot };
 
@@ -83,8 +83,7 @@ export function SlotList({ slotsGrouped }: SlotListProps) {
             <CardContent className="p-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                 {slots.map((slot) => {
-                  const startStr = formatTimeIST(new Date(slot.startTime));
-                  const endStr = formatTimeIST(new Date(slot.endTime));
+                  const range = formatSlotRange(slot.startTime, slot.endTime);
 
                   return (
                     <div
@@ -98,8 +97,8 @@ export function SlotList({ slotsGrouped }: SlotListProps) {
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-semibold tracking-tight">
-                          {startStr} - {endStr}
+                        <span className="text-sm font-semibold tracking-tight whitespace-nowrap">
+                          {range}
                         </span>
                         {slot.status === "AVAILABLE" && (
                           <Badge variant="success" className="text-[10px] uppercase">
