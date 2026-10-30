@@ -581,6 +581,8 @@ Setup an external cron monitor (e.g. [cron-job.org](https://cron-job.org), GitHu
   ```
 - **Expected Response:** HTTP 200 with JSON summary of processed holds, refunds, and email dispatches.
 
+The repository includes [`vercel.json`](./vercel.json) to run this route every five minutes on Vercel. Configure the same `CRON_SECRET` environment variable in Vercel; Vercel Cron sends it as the `Authorization: Bearer <CRON_SECRET>` header. Each run processes the existing full cron workload, including due email and WhatsApp deliveries, payment reconciliation, refund reconciliation, and stale-hold expiry. It is not a WhatsApp-only or single-record dispatcher.
+
 
 ## WhatsApp patient notifications (Twilio Sandbox demo)
 
