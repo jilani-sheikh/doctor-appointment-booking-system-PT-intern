@@ -30,6 +30,7 @@ import {
 import { getPaymentsMode, isCashfreeConfigured } from "@/lib/env";
 import { bookWithPaymentHold, requestRefund } from "@/lib/payments/service";
 import { revalidatePath } from "next/cache";
+import { scheduleOpportunisticMaintenance } from "@/lib/maintenance";
 
 /**
  * Books an appointment for a patient.
@@ -49,6 +50,7 @@ import { revalidatePath } from "next/cache";
  */
 export async function bookAppointmentAction(input: BookAppointmentInput) {
   const user = await requireRole(Role.PATIENT);
+  scheduleOpportunisticMaintenance();
 
   if (!user.patient) {
     return {

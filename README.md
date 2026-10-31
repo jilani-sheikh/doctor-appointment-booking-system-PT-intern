@@ -549,8 +549,8 @@ Add the following to your Vercel Project Settings (Settings > Environment Variab
    > [!IMPORTANT]
    > In Resend sandbox mode using `RESEND_FROM_EMAIL="onboarding@resend.dev"`, Resend **strictly restricts delivery to the email address registered to your Resend account owner**. Any attempt to deliver emails to other addresses (e.g. mock test patients) will be rejected by Resend with HTTP 403 (`"You can only send testing emails to your own email address"`). The outbox stores this in `lastError` and retains the item in `PENDING` status for cron retry.
 3. **Production Mode:** Add and verify your custom sender domain in Resend DNS settings (DKIM, SPF records) and configure `RESEND_FROM_EMAIL="appointments@yourdomain.com"`. Once verified, emails deliver to any patient and doctor email address.
-4. **Triggering Email Outbox Dispatch via Cron:**
-   Queued emails and reminders are dispatched by `/api/cron/tick`. You can manually trigger or test the cron tick in PowerShell with:
+4. **Triggering Email Outbox Dispatch:**
+   Signed-in page loads opportunistically run the same maintenance work after the response, including queued emails and reminders. You can also manually trigger `/api/cron/tick` in PowerShell with:
    ```powershell
    curl.exe -X GET "https://your-domain.vercel.app/api/cron/tick" -H "Authorization: Bearer <CRON_SECRET>"
    ```
@@ -559,27 +559,17 @@ Add the following to your Vercel Project Settings (Settings > Environment Variab
    Invoke-RestMethod -Uri "http://localhost:3000/api/cron/tick" -Headers @{ Authorization = "Bearer <CRON_SECRET>" }
    ```
 
-### ⏱️ External Cron Scheduler Setup (`/api/cron/tick`)
+### Maintenance and reminder timing
 
-Medrella's background worker endpoint `/api/cron/tick` handles:
+Medrella's authenticated endpoint `/api/cron/tick` handles:
 1. Expiring stale checkout holds (`PENDING_PAYMENT` > 20m old, controlled by `HOLD_MINUTES = 20`) and releasing the slots.
-2. Re-checking gateway status for pending payments.
+2. Re-checking gateway status for pending payments older than two minutes.
 3. Polling and synchronizing pending refunds.
-4. Dispatching due transactional email notifications and reminders from the outbox table (`notification_deliveries`).
+4. Retrying failed refunds up to three attempts.
+5. Dispatching due email and WhatsApp notifications, including reminders, from `notification_deliveries`.
 
-Setup an external cron monitor (e.g. [cron-job.org](https://cron-job.org), GitHub Actions, or Vercel Cron):
-- **Schedule:** Every 5 to 10 minutes (`*/5 * * * *` or `*/10 * * * *`).
-- **HTTP Method:** `GET`
-- **URL:** `https://your-domain.vercel.app/api/cron/tick`
-- **HTTP Headers:**
-  ```text
-  Authorization: Bearer <CRON_SECRET>
-  ```
-- **PowerShell Manual Trigger:**
-  ```powershell
-  curl.exe -X GET "https://your-domain.vercel.app/api/cron/tick" -H "Authorization: Bearer <CRON_SECRET>"
-  ```
-- **Expected Response:** HTTP 200 with JSON summary of processed holds, refunds, and email dispatches.
+There is deliberately no Vercel Cron configuration: Vercel Hobby does not support sub-daily cron schedules. Signed-in requests schedule this maintenance through Next.js `after()` and a database-backed 60-second gate. The root layout, patient payments pages, payment return page, doctor queue page, and booking action all provide opportunistic triggers. Several requests may race safely; only one maintenance run claims the database gate.
+Reminder timing depends on the application being used. If nobody opens the application, no opportunistic run occurs, so reminders are not guaranteed to be delivered at their exact offsets. Use the authenticated endpoint manually or an external scheduler if stronger timing guarantees are required.
 
 
 ## WhatsApp patient notifications (Twilio Sandbox demo)

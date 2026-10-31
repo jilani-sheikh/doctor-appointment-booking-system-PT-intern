@@ -9,6 +9,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { formatDateTimeIST } from "@/lib/time";
 import { formatINR } from "@/lib/money";
 import { CreditCard, Receipt } from "lucide-react";
+import { scheduleOpportunisticMaintenance } from "@/lib/maintenance";
 
 interface PaymentsPageProps {
   searchParams: Promise<{
@@ -18,6 +19,7 @@ interface PaymentsPageProps {
 
 export default async function PatientPaymentsPage({ searchParams }: PaymentsPageProps) {
   const user = await requireRole(Role.PATIENT);
+  scheduleOpportunisticMaintenance();
   const resolvedParams = await searchParams;
   const page = Math.max(1, parseInt(resolvedParams.page || "1", 10));
   const pageSize = 10;

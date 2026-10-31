@@ -9,6 +9,7 @@ import { toDoctorQueueItemDto, type SerializedDoctorQueueItem } from "@/lib/seri
 import { DoctorQueueView } from "./doctor-queue-view";
 import { Activity, ShieldAlert, ArrowLeft } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { scheduleOpportunisticMaintenance } from "@/lib/maintenance";
 
 export const metadata: Metadata = {
   title: "Live Consultation Queue — Doctor Portal",
@@ -17,6 +18,7 @@ export const metadata: Metadata = {
 
 export default async function DoctorQueuePage() {
   const user = await requireRole(Role.DOCTOR);
+  scheduleOpportunisticMaintenance();
   const doctor = user.doctor;
 
   if (!doctor || doctor.status !== DoctorStatus.APPROVED) {

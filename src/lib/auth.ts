@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { getAuthSecret, isAdminEmail, isDatabaseConfigured } from "@/lib/env";
 import { signInSchema } from "@/lib/validations/auth";
 import { Role, type User as PrismaUser, type Patient, type Doctor } from "@/generated/prisma/client";
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 
 // Constant-time dummy hash for timing-attack defense on unknown emails (bcrypt cost 12)
 const DUMMY_HASH = "$2b$12$W7cZLbg2wRkIqumErxXbheoBLT3Q72qRXCr4u0u1iXb5GY1y2VKQK";
@@ -189,6 +189,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     });
     return user ?? null;
   } catch (err) {
+    unstable_rethrow(err);
     console.warn("[Medrella Auth] Failed to load user, degrading to null:", err);
     return null;
   }

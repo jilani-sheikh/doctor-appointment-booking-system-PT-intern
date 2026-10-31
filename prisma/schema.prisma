@@ -428,3 +428,11 @@ model NotificationDelivery {
   @@index([appointmentId])
   @@map("notification_deliveries")
 }
+
+model MaintenanceState {
+  key           String    @id
+  lastStartedAt DateTime? @map("last_started_at")
+  lockUntil     DateTime? @map("lock_until")
+
+  @@map("maintenance_state")
+}

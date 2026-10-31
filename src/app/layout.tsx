@@ -7,6 +7,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { toNavUser, toNotificationDto, type SerializedNotification } from "@/lib/serializers";
 import { isDatabaseConfigured } from "@/lib/env";
 import { db } from "@/lib/db";
+import { scheduleOpportunisticMaintenance } from "@/lib/maintenance";
+import { unstable_rethrow } from "next/navigation";
 
 export const runtime = "nodejs";
 
@@ -30,6 +32,7 @@ export default async function RootLayout({
     user = toNavUser(currentUser);
 
     if (user && isDatabaseConfigured()) {
+      scheduleOpportunisticMaintenance();
       try {
         const [count, rawNotifications] = await Promise.all([
           db.notification.count({
@@ -48,6 +51,7 @@ export default async function RootLayout({
       }
     }
   } catch (err) {
+    unstable_rethrow(err);
     console.warn("[RootLayout] Failed to resolve current user, defaulting to null:", err);
   }
 

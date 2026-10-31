@@ -10,6 +10,7 @@ import { CheckCircle2, AlertTriangle, Clock, XCircle, ArrowRight } from "lucide-
 import { formatSlotDateTimeRangeIST } from "@/lib/time";
 import { formatINR } from "@/lib/money";
 import { PendingRefresh } from "./pending-refresh";
+import { scheduleOpportunisticMaintenance } from "@/lib/maintenance";
 
 interface ReturnPageProps {
   searchParams: Promise<{
@@ -19,6 +20,7 @@ interface ReturnPageProps {
 
 export default async function PaymentReturnPage({ searchParams }: ReturnPageProps) {
   const user = await requireRole(Role.PATIENT);
+  scheduleOpportunisticMaintenance();
   const resolvedParams = await searchParams;
   const orderId = resolvedParams.order_id;
 
