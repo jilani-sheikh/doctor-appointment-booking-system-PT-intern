@@ -571,10 +571,12 @@ Medrella's authenticated endpoint `/api/cron/tick` handles:
 There is deliberately no Vercel Cron configuration: Vercel Hobby does not support sub-daily cron schedules. Signed-in requests schedule this maintenance through Next.js `after()` and a database-backed 60-second gate. The root layout, patient payments pages, payment return page, doctor queue page, and booking action all provide opportunistic triggers. Several requests may race safely; only one maintenance run claims the database gate.
 Reminder timing depends on the application being used. If nobody opens the application, no opportunistic run occurs, so reminders are not guaranteed to be delivered at their exact offsets. Use the authenticated endpoint manually or an external scheduler if stronger timing guarantees are required.
 
+The repository includes [`vercel.json`](./vercel.json) to run this route every five minutes on Vercel. Configure the same `CRON_SECRET` environment variable in Vercel; Vercel Cron sends it as the `Authorization: Bearer <CRON_SECRET>` header. Each run processes the existing full cron workload, including due email and WhatsApp deliveries, payment reconciliation, refund reconciliation, and stale-hold expiry. It is not a WhatsApp-only or single-record dispatcher.
+
 
 ## WhatsApp patient notifications (Twilio Sandbox demo)
 
-WhatsApp is patient-only and disabled by default. Configure `WHATSAPP_PROVIDER=twilio`, `WHATSAPP_MODE=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM=whatsapp:+<sandbox-number>`, and `WHATSAPP_DEFAULT_COUNTRY_CODE=91` server-side only. Never use `NEXT_PUBLIC_` for these variables. The patient must explicitly opt in; opting out cancels pending WhatsApp deliveries. The UI displays the destination as `+91 ******1234`.
+WhatsApp is patient-only and disabled by default. Configure `WHATSAPP_PROVIDER=twilio`, `WHATSAPP_MODE=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM=whatsapp:+<sandbox-number>`, `WHATSAPP_DEFAULT_COUNTRY_CODE=91`, and one approved `HX...` Content Template SID for each `TWILIO_WHATSAPP_CONTENT_SID_*` variable in `.env.example`, server-side only. The content templates must use the documented positional variables for their corresponding notification. Never use `NEXT_PUBLIC_` for these variables. The patient must explicitly opt in; opting out cancels pending WhatsApp deliveries. The UI displays the destination as `+91 ******1234`.
 
 ### Sandbox setup and limitations
 

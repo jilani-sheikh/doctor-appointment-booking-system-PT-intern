@@ -6,6 +6,7 @@ export const TWILIO_ERROR_REASONS: Record<string, string> = {
   "21211": "invalid phone number",
   "20003": "Twilio authentication failed",
   "63038": "Twilio trial limit reached",
+  "21654": "Twilio ContentSid is required when ContentVariables are provided",
 };
 
 export function classifyWhatsAppError(httpStatus: number, errorCode?: string | number): {

@@ -460,6 +460,7 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
     });
 
     // Outbox email: booking confirmed
+    console.info("[Payment] Enqueueing confirmation notifications.");
     await enqueuePatientNotifications(db, {
       userId: appointment.patient.userId,
       appointmentId,
@@ -475,10 +476,12 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
       whatsappTemplate: "appointment_confirmed",
       whatsappDedupeKey: `whatsapp:appointment_confirmed:${appointmentId}`,
     });
+    console.info("[Payment] Confirmation notifications enqueued.");
 
     // Outbox email and WhatsApp receipt (if payment row exists and was paid)
     const paidPayment = appointment.payments[0];
     if (paidPayment) {
+      console.info("[Payment] Enqueueing payment receipt notifications.");
       await enqueuePatientNotifications(db, {
         userId: appointment.patient.userId,
         appointmentId,
@@ -495,6 +498,7 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
         whatsappTemplate: "payment_receipt",
         whatsappDedupeKey: `whatsapp:payment_receipt:${paidPayment.id}`,
       });
+      console.info("[Payment] Payment receipt notifications enqueued.");
     }
 
     // Outbox email: doctor new booking notification (best-effort)
@@ -538,6 +542,12 @@ export async function handlePaymentSuccess(
   paidAmount?: number | null,
   method?: string | null
 ): Promise<boolean> {
+  console.info("[Payment] Payment success handler entered:", {
+    hasPaymentId: Boolean(paymentId),
+    hasPaidAmount: paidAmount !== undefined && paidAmount !== null,
+    hasMethod: Boolean(method),
+  });
+
   const payment = await db.payment.findUnique({
     where: { providerOrderId: orderId },
     include: {
@@ -556,6 +566,7 @@ export async function handlePaymentSuccess(
 
   // Already marked PAID (idempotent)
   if (payment.status === PaymentStatus.PAID) {
+    console.info("[Payment] Payment already marked PAID; finalization skipped.");
     return true;
   }
 

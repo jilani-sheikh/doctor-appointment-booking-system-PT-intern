@@ -213,7 +213,19 @@ export function getWhatsAppProvider(): "twilio" {
   return "twilio";
 }
 
-function requiredWhatsAppVariable(name: "TWILIO_ACCOUNT_SID" | "TWILIO_AUTH_TOKEN" | "TWILIO_WHATSAPP_FROM"): string {
+function requiredWhatsAppVariable(
+  name:
+    | "TWILIO_ACCOUNT_SID"
+    | "TWILIO_AUTH_TOKEN"
+    | "TWILIO_WHATSAPP_FROM"
+    | "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_CONFIRMED"
+    | "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_CANCELLED"
+    | "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_RESCHEDULED"
+    | "TWILIO_WHATSAPP_CONTENT_SID_ARRIVAL_WINDOW"
+    | "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_REMINDER"
+    | "TWILIO_WHATSAPP_CONTENT_SID_PAYMENT_RECEIPT"
+    | "TWILIO_WHATSAPP_CONTENT_SID_REFUND_UPDATE"
+): string {
   const value = process.env[name]?.trim();
   if (!value) {
     throw new Error(`[Medrella Config Error] Missing required environment variable: ${name}. Configure ${name} to enable WhatsApp notifications.`);
@@ -227,6 +239,36 @@ export function getTwilioConfig() {
     authToken: requiredWhatsAppVariable("TWILIO_AUTH_TOKEN"),
     from: requiredWhatsAppVariable("TWILIO_WHATSAPP_FROM"),
   };
+}
+
+export type TwilioWhatsAppTemplate =
+  | "appointment_confirmed"
+  | "appointment_cancelled"
+  | "appointment_rescheduled"
+  | "arrival_window"
+  | "appointment_reminder"
+  | "payment_receipt"
+  | "refund_update";
+
+const TWILIO_CONTENT_SID_VARIABLES: Record<TwilioWhatsAppTemplate, Parameters<typeof requiredWhatsAppVariable>[0]> = {
+  appointment_confirmed: "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_CONFIRMED",
+  appointment_cancelled: "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_CANCELLED",
+  appointment_rescheduled: "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_RESCHEDULED",
+  arrival_window: "TWILIO_WHATSAPP_CONTENT_SID_ARRIVAL_WINDOW",
+  appointment_reminder: "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_REMINDER",
+  payment_receipt: "TWILIO_WHATSAPP_CONTENT_SID_PAYMENT_RECEIPT",
+  refund_update: "TWILIO_WHATSAPP_CONTENT_SID_REFUND_UPDATE",
+};
+
+export function getTwilioWhatsAppContentSid(template: TwilioWhatsAppTemplate): string {
+  const variable = TWILIO_CONTENT_SID_VARIABLES[template];
+  const value = requiredWhatsAppVariable(variable);
+  if (!/^HX[0-9a-fA-F]{32}$/.test(value)) {
+    throw new Error(
+      `[Medrella Config Error] Invalid ${variable}. Configure the approved Twilio Content Template SID (HX...) for ${template}.`
+    );
+  }
+  return value;
 }
 
 export function getWhatsAppDefaultCountryCode(): string {
