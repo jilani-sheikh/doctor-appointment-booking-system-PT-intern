@@ -19,7 +19,7 @@ function baseLayout(title: string, bodyContent: string, actionButton?: { text: s
   const buttonHtml = actionButton
     ? `
       <div style="margin: 28px 0; text-align: center;">
-        <a href="${actionButton.url}" style="background-color: #0f766e; color: #ffffff; padding: 12px 28px; font-weight: 600; text-decoration: none; border-radius: 8px; display: inline-block; font-size: 15px; letter-spacing: 0.3px;">
+        <a href="${escapeHtml(actionButton.url)}" style="background-color: #0f766e; color: #ffffff; padding: 12px 28px; font-weight: 600; text-decoration: none; border-radius: 8px; display: inline-block; font-size: 15px; letter-spacing: 0.3px;">
           ${escapeHtml(actionButton.text)}
         </a>
       </div>
@@ -77,6 +77,23 @@ function baseLayout(title: string, bodyContent: string, actionButton?: { text: s
   const text = `Medrella Healthcare - ${title}\n\n${bodyContent.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()}${textButton}\n\n© ${currentYear} Medrella Healthcare Systems. All times in IST.`;
 
   return { html, text };
+}
+
+export function renderPasswordResetEmail(params: { resetUrl: string; expiresAt: Date }) {
+  const expiry = formatDateTimeIST(params.expiresAt);
+  return baseLayout(
+    "Reset your Medrella password",
+    `<p>We received a request to reset your Medrella password.</p>
+     <p>This link expires at <strong>${escapeHtml(expiry)} IST</strong> (within 30 minutes). If you did not request this, you can safely ignore this email.</p>`,
+    { text: "Reset password", url: params.resetUrl }
+  );
+}
+
+export function renderGoogleAccountPasswordEmail() {
+  return baseLayout(
+    "Use Google to sign in",
+    "<p>This email is linked to a Google account rather than a password. Use <strong>Continue with Google</strong> on the Medrella sign-in page.</p>"
+  );
 }
 
 // 1. Booking Confirmed

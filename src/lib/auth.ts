@@ -57,7 +57,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           where: { email },
         });
 
-        if (!user) {
+        if (!user || user.deletedAt) {
           // Timing-attack defense: run constant-time dummy compare
           await bcrypt.compare(password, DUMMY_HASH);
           return null;
@@ -85,10 +85,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    jwt({ token, user }) {
+    async jwt({ token, user }) {
       if (user?.id) {
         token.id = user.id;
         token.role = user.role;
+        const current = await db.user.findUnique({
+          where: { id: user.id },
+          select: { passwordChangedAt: true },
+        });
+        token.passwordChangedAt = current?.passwordChangedAt?.toISOString() ?? null;
       }
       return token;
     },
@@ -96,6 +101,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (session.user && token.id) {
         session.user.id = token.id as string;
         session.user.role = (token.role as Role) ?? null;
+        session.user.passwordChangedAt = (token.passwordChangedAt as string | null | undefined) ?? null;
       }
       return session;
     },
@@ -181,13 +187,19 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     }
 
     const user = await db.user.findUnique({
-      where: { id: session.user.id },
+      where: { id: session.user.id, deletedAt: null },
       include: {
         patient: true,
         doctor: true,
       },
     });
-    return user ?? null;
+    if (!user) return null;
+    const changedAt = user.passwordChangedAt?.getTime() ?? 0;
+    const sessionPasswordChangedAt = session.user.passwordChangedAt
+      ? new Date(session.user.passwordChangedAt).getTime()
+      : 0;
+    if (changedAt > sessionPasswordChangedAt) return null;
+    return user;
   } catch (err) {
     unstable_rethrow(err);
     console.warn("[Medrella Auth] Failed to load user, degrading to null:", err);
