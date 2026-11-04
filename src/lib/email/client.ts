@@ -29,7 +29,7 @@ export interface SendEmailResult {
 
 /**
  * Dispatches an email via Resend.
- * Gracefully handles sandbox restrictions (e.g. onboarding@resend.dev recipient limits)
+ * Gracefully handles provider sandbox restrictions
  * without ever throwing or leaking secrets.
  */
 export async function sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
@@ -37,9 +37,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
   const fromEmail = getResendFromEmail();
 
   if (!client) {
-    console.warn(
-      `[Medrella Email] RESEND_API_KEY is not configured. Email to ${options.to} (${options.subject}) was skipped.`
-    );
+    console.warn(`[Medrella Email Warning] Email skipped: RESEND_API_KEY is not configured.`);
     return {
       success: false,
       error: "RESEND_API_KEY is not configured",
@@ -58,10 +56,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
 
     if (res.error) {
       const errorMsg = res.error.message || "Failed to send email via Resend";
-      console.warn(
-        `[Medrella Email Warning] Resend rejected recipient ${options.to}: ${errorMsg}. ` +
-        "(Note: In Resend sandbox mode with onboarding@resend.dev, delivery is restricted to your verified account email address.)"
-      );
+      console.warn(`[Medrella Email Warning] Resend rejected email: ${errorMsg}`);
       return {
         success: false,
         error: errorMsg,
@@ -74,9 +69,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
     };
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : "Unexpected error during Resend email dispatch";
-    console.warn(
-      `[Medrella Email Warning] Could not deliver email to ${options.to}: ${errorMsg}`
-    );
+    console.warn(`[Medrella Email Warning] Could not deliver email: ${errorMsg}`);
     return {
       success: false,
       error: errorMsg,

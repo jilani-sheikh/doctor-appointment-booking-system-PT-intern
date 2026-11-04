@@ -12,7 +12,13 @@ import {
   type RegisterInput,
   type OnboardingInput,
 } from "@/lib/validations/auth";
-import { Role, DoctorStatus, Prisma } from "@/generated/prisma/client";
+import {
+  DeliveryStatus,
+  NotificationChannel,
+  Role,
+  DoctorStatus,
+  Prisma,
+} from "@/generated/prisma/client";
 import { AuthError } from "next-auth";
 import { createHash, randomBytes } from "node:crypto";
 import { sendEmail } from "@/lib/email/client";
@@ -63,21 +69,30 @@ export async function requestPasswordResetAction(data: PasswordResetRequestInput
   const email = parsed.data.email;
   try {
     const user = await db.user.findUnique({ where: { email } });
-    if (!user || user.deletedAt) return { success: true, message: genericMessage };
+    if (!user || user.deletedAt) {
+      console.warn("[Password Reset Warning] Request ignored: account not found.");
+      return { success: true, message: genericMessage };
+    }
 
     const since = new Date(Date.now() - PASSWORD_RESET_WINDOW_MS);
     const recentRequests = await db.passwordResetToken.count({
       where: { userId: user.id, createdAt: { gte: since } },
     });
-    if (recentRequests >= PASSWORD_RESET_MAX_REQUESTS) return { success: true, message: genericMessage };
+    if (recentRequests >= PASSWORD_RESET_MAX_REQUESTS) {
+      console.warn("[Password Reset Warning] Request rate limited: email threshold reached.");
+      return { success: true, message: genericMessage };
+    }
 
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
     if (!user.passwordHash) {
-      await sendEmail({
+      const result = await sendEmail({
         to: email,
         subject: "Use Google to sign in to Medrella",
         ...renderGoogleAccountPasswordEmail(),
       });
+      if (!result.success) {
+        console.warn(`[Password Reset Warning] Google guidance email failed: ${result.error ?? "unknown email error"}`);
+      }
       return { success: true, message: genericMessage };
     }
 
@@ -90,14 +105,42 @@ export async function requestPasswordResetAction(data: PasswordResetRequestInput
     });
 
     const resetUrl = `${getAppUrl()}/reset-password?token=${encodeURIComponent(rawToken)}`;
-    await sendEmail({
+    const delivery = await db.notificationDelivery.create({
+      data: {
+        userId: user.id,
+        channel: NotificationChannel.EMAIL,
+        template: "password_reset",
+        payload: {},
+        dedupeKey: `password-reset:${user.id}:${hashResetToken(rawToken)}`,
+        scheduledFor: new Date(),
+        status: DeliveryStatus.PROCESSING,
+      },
+    });
+    const result = await sendEmail({
       to: email,
       subject: "Reset your Medrella password",
       ...renderPasswordResetEmail({ resetUrl, expiresAt }),
     });
+    if (result.success) {
+      await db.notificationDelivery.update({
+        where: { id: delivery.id },
+        data: { status: DeliveryStatus.SENT, sentAt: new Date(), lockedAt: null },
+      });
+    } else {
+      await db.notificationDelivery.update({
+        where: { id: delivery.id },
+        data: {
+          status: DeliveryStatus.FAILED,
+          attempts: 1,
+          lastError: result.error ?? "Email delivery failed",
+          lockedAt: null,
+        },
+      });
+      console.warn(`[Password Reset Warning] Reset email failed: ${result.error ?? "unknown email error"}`);
+    }
     return { success: true, message: genericMessage };
-  } catch (error) {
-    console.error("[Password Reset] Request failed:", error instanceof Error ? error.message : "unknown error");
+  } catch {
+    console.warn("[Password Reset Warning] Request failed: database or token persistence error.");
     return { success: true, message: genericMessage };
   }
 }
