@@ -10,6 +10,7 @@ import { Calendar, User, Clock, ArrowRight, Activity, AlertCircle } from "lucide
 import { formatDateIST, formatTimeIST, formatSlotRange, formatSlotDateTimeRangeIST, getTodayISTDateString, getISTDateString } from "@/lib/time";
 import { calculateQueueEstimates, EMERGENCY_DISCLAIMER, type QueueAppointmentItem } from "@/lib/queue";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
+import { DeleteProfileDialog } from "@/components/auth/delete-profile-dialog";
 
 export const metadata: Metadata = {
   title: "Patient Dashboard — Medrella",
@@ -290,6 +291,9 @@ export default async function PatientDashboardPage() {
             <div>
               <p className="text-xs text-muted-foreground">Gender</p>
               <p className="font-medium text-foreground">{patient?.gender ?? "Not specified"}</p>
+            </div>
+            <div className="pt-2 border-t border-border">
+              <DeleteProfileDialog email={user.email} />
             </div>
           </CardContent>
         </Card>

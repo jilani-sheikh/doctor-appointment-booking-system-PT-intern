@@ -129,7 +129,7 @@ export function RescheduleView({
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="p-4">
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 gap-2.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                       {daySlots.map((slot) => {
                         const isSelected = selectedSlotId === slot.id;
                         const timeRange = formatSlotRange(slot.startTime, slot.endTime);
@@ -144,7 +144,7 @@ export function RescheduleView({
                               setSelectedSlotId(slot.id);
                               setSelectedSlotTimeStr(`${dateLabel}, ${timeRange}`);
                             }}
-                            className={`py-2.5 px-3 rounded-lg border text-xs font-medium transition-all text-center whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                            className={`min-w-0 overflow-hidden py-2.5 px-3 rounded-lg border text-xs font-medium transition-all text-center whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
                               isSelected
                                 ? "bg-primary text-primary-foreground border-primary shadow-xs font-bold ring-2 ring-primary/30"
                                 : "bg-card text-foreground border-border hover:border-primary/50 hover:bg-muted/30"

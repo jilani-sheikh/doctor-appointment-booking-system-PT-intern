@@ -496,7 +496,7 @@ export function DoctorWavesView({
 
                       {/* Performance strip for published waves */}
                       {isPublished && (
-                        <div className="grid grid-cols-4 gap-2 p-2.5 rounded-lg bg-muted/40 border border-border/50 text-xs">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-2.5 rounded-lg bg-muted/40 border border-border/50 text-xs">
                           <div>
                             <span className="text-[10px] text-muted-foreground">Expected</span>
                             <div className="font-bold text-foreground">{wave.assignedCount}</div>
@@ -528,9 +528,9 @@ export function DoctorWavesView({
                             {wave.appointments.map((appt) => (
                               <div
                                 key={appt.id}
-                                className="py-2 flex items-center justify-between text-xs gap-2"
+                                className="py-2 flex flex-wrap items-center justify-between text-xs gap-2"
                               >
-                                <div className="flex items-center gap-2">
+                                <div className="min-w-0 flex flex-wrap items-center gap-2">
                                   <User className="h-3.5 w-3.5 text-primary" />
                                   <span className="font-medium text-foreground">{appt.patientName}</span>
                                   <span className="text-muted-foreground">

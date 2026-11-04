@@ -296,7 +296,7 @@ export function DoctorBookingSlots({
               </CardHeader>
 
               <CardContent className="p-4">
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                   {daySlots.map((slot) => {
                     const range = formatSlotRange(slot.startTime, slot.endTime);
                     const ariaLabel = `Book ${range.replace(" - ", " to ")} on ${dateLabel}`;
@@ -308,7 +308,7 @@ export function DoctorBookingSlots({
                         aria-label={ariaLabel}
                         onClick={() => handleSlotClick(dateLabel, slot)}
                         disabled={isPending}
-                        className="flex items-center justify-center py-2.5 px-3 rounded-lg border border-border/80 bg-card hover:bg-primary/5 hover:border-primary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 transition-all text-xs font-medium text-foreground cursor-pointer group shadow-2xs hover:shadow-xs disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                        className="min-w-0 flex items-center justify-center py-2.5 px-3 rounded-lg border border-border/80 bg-card hover:bg-primary/5 hover:border-primary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 transition-all text-xs font-medium text-foreground cursor-pointer group shadow-2xs hover:shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <span className="group-hover:text-primary font-semibold whitespace-nowrap">
                           {range}

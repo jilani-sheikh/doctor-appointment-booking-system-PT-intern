@@ -106,6 +106,9 @@ model User {
   image                 String?
   role                  Role?
   passwordHash          String?   @map("password_hash")
+  passwordChangedAt      DateTime? @map("password_changed_at")
+  deletedAt              DateTime? @map("deleted_at")
+  deletionRequestedAt    DateTime? @map("deletion_requested_at")
   emailRemindersEnabled Boolean   @default(true) @map("email_reminders_enabled")
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")
@@ -117,8 +120,23 @@ model User {
   wavesCreated           Wave[]
   notifications          Notification[]
   notificationDeliveries NotificationDelivery[]
+  passwordResetTokens    PasswordResetToken[]
 
   @@map("users")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 model Account {
