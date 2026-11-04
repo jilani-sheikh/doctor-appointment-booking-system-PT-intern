@@ -110,7 +110,7 @@ export function DoctorWavesView({
     });
   };
 
-  // 3. Create Manual Wave
+  // 3. Create Manual Arrival Window
   const handleCreateManualWave = () => {
     startTransition(async () => {
       const res = await createDoctorManualWaveAction({
@@ -131,7 +131,7 @@ export function DoctorWavesView({
     });
   };
 
-  // 4. Publish Wave
+  // 4. Publish Arrival Window
   const handlePublishWave = (waveId: string) => {
     startTransition(async () => {
       const res = await publishDoctorWaveAction({ waveId });
@@ -179,7 +179,7 @@ export function DoctorWavesView({
 
   // Date change handler
   const handleDateChange = (newDate: string) => {
-    router.push(`/doctor/waves?date=${newDate}`);
+    router.push(`/doctor/arrival-windows?date=${newDate}`);
   };
 
   const publishedCount = waves.filter((w) => w.status === "PUBLISHED").length;
@@ -193,11 +193,11 @@ export function DoctorWavesView({
         <div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300 uppercase tracking-wider flex items-center gap-1">
-              <Waves className="h-3.5 w-3.5" /> Wave Scheduling
+              <Waves className="h-3.5 w-3.5" /> Arrival Window Scheduling
             </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground mt-1">
-            Doctor Arrival Waves
+            Doctor Arrival Windows
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             Automatic arrival staggered windows over your fixed consultation slots. Slot times and consultation order never change.
@@ -213,7 +213,7 @@ export function DoctorWavesView({
             className="gap-1.5"
           >
             <Plus className="h-4 w-4" />
-            Manual Wave
+            Manual Arrival Window
           </Button>
 
           <Button
@@ -224,7 +224,7 @@ export function DoctorWavesView({
             className="gap-1.5 border-blue-300 dark:border-blue-800 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30"
           >
             <Sparkles className="h-4 w-4" />
-            Generate Drafts
+            Generate Arrival Window Drafts
           </Button>
 
           <Button
@@ -235,7 +235,7 @@ export function DoctorWavesView({
             className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium"
           >
             <Send className="h-4 w-4" />
-            Generate & Publish
+            Generate & Publish Arrival Windows
           </Button>
         </div>
       </div>
@@ -258,7 +258,7 @@ export function DoctorWavesView({
 
         <div className="flex items-center gap-6 text-xs text-muted-foreground flex-wrap">
           <div>
-            Total Waves: <strong className="text-foreground text-sm">{waves.length}</strong>
+            Total Arrival Windows: <strong className="text-foreground text-sm">{waves.length}</strong>
           </div>
           <div>
             Published: <strong className="text-emerald-600 text-sm">{publishedCount}</strong>
@@ -281,7 +281,7 @@ export function DoctorWavesView({
           <div>
             <CardTitle className="text-base flex items-center gap-2">
               <Settings className="h-4 w-4 text-primary" />
-              Automatic Wave Preferences
+              Automatic Arrival Window Preferences
             </CardTitle>
             <CardDescription className="text-xs mt-0.5">
               These settings control how your consultations are automatically grouped into wave windows.
@@ -316,7 +316,7 @@ export function DoctorWavesView({
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Wave Capacity (patients)</Label>
+              <Label className="text-xs text-muted-foreground">Arrival Window Capacity (patients)</Label>
               {isEditingSettings ? (
                 <Input
                   type="number"
@@ -350,7 +350,7 @@ export function DoctorWavesView({
             </div>
 
             <div className="space-y-1.5 flex flex-col justify-center">
-              <Label className="text-xs text-muted-foreground">Auto-Publish Waves</Label>
+              <Label className="text-xs text-muted-foreground">Auto-Publish Arrival Windows</Label>
               {isEditingSettings ? (
                 <label className="flex items-center gap-2 mt-1 cursor-pointer">
                   <input
@@ -388,14 +388,14 @@ export function DoctorWavesView({
         </CardContent>
       </Card>
 
-      {/* Main Grid: Waves List & Unassigned Appointments */}
+      {/* Main Grid: Arrival Windows List & Unassigned Appointments */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Waves List (2 columns on lg) */}
+        {/* Arrival Windows List (2 columns on lg) */}
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
               <Waves className="h-5 w-5 text-primary" />
-              Waves for {dateStr} ({waves.length})
+              Arrival Windows for {dateStr} ({waves.length})
             </h2>
           </div>
 
@@ -403,9 +403,9 @@ export function DoctorWavesView({
             <Card className="border-dashed border-2">
               <CardContent className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
                 <Waves className="h-10 w-10 mb-3 opacity-30 text-primary" />
-                <h3 className="font-semibold text-foreground text-base">No Waves Scheduled</h3>
+                <h3 className="font-semibold text-foreground text-base">No Arrival Windows Scheduled</h3>
                 <p className="text-sm mt-1 max-w-md">
-                  Click <strong>&quot;Generate Drafts&quot;</strong> or <strong>&quot;Generate & Publish&quot;</strong> to automatically group your consultations into arrival waves.
+                  Click <strong>&quot;Generate Arrival Window Drafts&quot;</strong> or <strong>&quot;Generate & Publish Arrival Windows&quot;</strong> to automatically group your consultations into arrival windows.
                 </p>
               </CardContent>
             </Card>
@@ -486,7 +486,7 @@ export function DoctorWavesView({
                             </>
                           )}
                           <Link
-                            href={`/doctor/waves/${wave.id}`}
+                            href={`/doctor/arrival-windows/${wave.id}`}
                             className={buttonVariants({ variant: "outline", size: "sm", className: "text-xs gap-1" })}
                           >
                             Details <ArrowRight className="h-3 w-3" />
@@ -564,9 +564,9 @@ export function DoctorWavesView({
 
           <Card className="border-border shadow-xs">
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-semibold">Active Consultations Without a Wave</CardTitle>
+              <CardTitle className="text-sm font-semibold">Active Consultations Without an Arrival Window</CardTitle>
               <CardDescription className="text-xs">
-                Patients who do not have an arrival window assigned for this day.
+                Patients who do not have an wave assigned for this day.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -599,7 +599,7 @@ export function DoctorWavesView({
                           onClick={() => setAssignApptId(appt.id)}
                           className="w-full text-xs"
                         >
-                          Assign to Wave...
+                          Assign to Arrival Window...
                         </Button>
                       </div>
                     )}
@@ -611,11 +611,11 @@ export function DoctorWavesView({
         </div>
       </div>
 
-      {/* Manual Wave Creation Modal */}
+      {/* Manual Arrival Window Creation Modal */}
       <Dialog open={isManualModalOpen} onOpenChange={setIsManualModalOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Create Manual Arrival Wave</DialogTitle>
+            <DialogTitle>Create Manual Arrival Window</DialogTitle>
             <DialogDescription className="text-xs">
               Manually created waves enforce strict overlap checks to prevent scheduling conflicts.
             </DialogDescription>
@@ -676,24 +676,24 @@ export function DoctorWavesView({
               onClick={handleCreateManualWave}
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
-              Create Draft Wave
+              Create Draft Arrival Window
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Assign Appointment to Wave Modal */}
+      {/* Assign Appointment to Arrival Window Modal */}
       <Dialog open={Boolean(assignApptId)} onOpenChange={(open) => !open && setAssignApptId(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Assign Consultation to Wave</DialogTitle>
+            <DialogTitle>Assign Consultation to Arrival Window</DialogTitle>
             <DialogDescription className="text-xs">
               Select an available wave window for this patient.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 py-2">
-            <Label className="text-xs font-semibold">Target Wave:</Label>
+            <Label className="text-xs font-semibold">Target Arrival Window:</Label>
             <div className="space-y-2 max-h-60 overflow-y-auto">
               {waves.map((w) => {
                 const isFull = w.assignedCount >= w.capacity;

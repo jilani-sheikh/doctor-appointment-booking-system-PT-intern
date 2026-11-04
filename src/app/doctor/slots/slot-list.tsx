@@ -1,13 +1,15 @@
 "use client";
 
 import { useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { toggleBlockSlotAction, deleteSlotAction } from "@/lib/actions/slots";
+import { cancelAllSlotsForDateAction } from "@/lib/actions/slots";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Ban, CheckCircle2, Clock, Trash2, Calendar } from "lucide-react";
-import { formatSlotRange } from "@/lib/time";
+import { formatSlotRange, getISTDateString } from "@/lib/time";
 import type { SerializedSlot } from "@/lib/serializers";
 export type { SerializedSlot };
 
@@ -17,12 +19,14 @@ interface SlotListProps {
 
 export function SlotList({ slotsGrouped }: SlotListProps) {
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   const handleToggleBlock = (slotId: string) => {
     startTransition(async () => {
       const res = await toggleBlockSlotAction(slotId);
       if (res.success) {
         toast.success(res.message);
+        router.refresh();
       } else {
         toast.error(res.error || "Failed to update slot.");
       }
@@ -35,8 +39,31 @@ export function SlotList({ slotsGrouped }: SlotListProps) {
       const res = await deleteSlotAction(slotId);
       if (res.success) {
         toast.success(res.message);
+        router.refresh();
       } else {
         toast.error(res.error || "Failed to delete slot.");
+      }
+    });
+  };
+
+  const handleCancelAll = (date: string, slotCount: number) => {
+    if (!confirm(`Cancel all ${slotCount} slot(s) for this date?`)) return;
+    startTransition(async () => {
+      const result = await cancelAllSlotsForDateAction(date);
+      if (!result.success && "requiresConfirmation" in result) {
+        if (!confirm(`${result.activeAppointments?.length ?? 0} booked appointment(s) will be cancelled and refunded where applicable. Continue?`)) return;
+        const confirmed = await cancelAllSlotsForDateAction(date, true);
+        if (!confirmed.success) {
+          toast.error(confirmed.error || "Failed to cancel all slots.");
+        } else {
+          toast.success("All slots for this date were cancelled.");
+          router.refresh();
+        }
+      } else if (!result.success) {
+        toast.error(result.error || "Failed to cancel all slots.");
+      } else {
+        toast.success("All slots for this date were cancelled.");
+        router.refresh();
       }
     });
   };
@@ -67,6 +94,7 @@ export function SlotList({ slotsGrouped }: SlotListProps) {
 
       {dates.map((dateKey) => {
         const slots = slotsGrouped[dateKey];
+        const date = getISTDateString(new Date(slots[0].startTime));
         return (
           <Card key={dateKey} className="overflow-hidden border-border shadow-xs">
             <CardHeader className="bg-muted/40 py-3 px-4 border-b border-border/60">
@@ -78,6 +106,14 @@ export function SlotList({ slotsGrouped }: SlotListProps) {
                 <span className="text-xs text-muted-foreground font-medium">
                   {slots.length} slot{slots.length > 1 ? "s" : ""}
                 </span>
+                <Button
+                  size="xs"
+                  variant="destructive"
+                  disabled={isPending}
+                  onClick={() => handleCancelAll(date, slots.length)}
+                >
+                  Cancel all slots
+                </Button>
               </div>
             </CardHeader>
             <CardContent className="p-4">

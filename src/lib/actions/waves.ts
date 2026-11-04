@@ -24,6 +24,7 @@ import {
   type DeleteDoctorDraftWaveInput,
 } from "@/lib/validations/waves";
 import { revalidatePath } from "next/cache";
+import { effectiveSlot } from "@/lib/scheduling";
 import { enqueuePatientNotifications } from "@/lib/notifications/index";
 
 /**
@@ -56,7 +57,7 @@ export async function updateDoctorWaveSettingsAction(input: DoctorWaveSettingsIn
       },
     });
 
-    revalidatePath("/doctor/waves");
+    revalidatePath("/doctor/arrival-windows");
     return { success: true, message: "Wave scheduling settings updated successfully." };
   } catch (error) {
     console.error("[updateDoctorWaveSettingsAction] Error updating settings:", error);
@@ -184,8 +185,8 @@ export async function generateDoctorWavesAction(
           appointments: eligibleAppointments.map((a) => ({
             id: a.id,
             patientId: a.patient.id,
-            slotStartTime: a.availability.startTime,
-            slotEndTime: a.availability.endTime,
+            slotStartTime: effectiveSlot(a).start,
+            slotEndTime: effectiveSlot(a).end,
             status: a.status,
             waveId: a.waveId,
           })),
@@ -273,8 +274,8 @@ export async function generateDoctorWavesAction(
                   template: "booking_confirmed",
                   payload: {
                     doctorName: currentDoc.user.name ?? "Practitioner",
-                    startTime: assigned.availability.startTime.toISOString(),
-                    endTime: assigned.availability.endTime.toISOString(),
+                    startTime: effectiveSlot(assigned).start.toISOString(),
+                    endTime: effectiveSlot(assigned).end.toISOString(),
                     arrivalStartTime: new Date(w.windowStart).toISOString(),
                     arrivalEndTime: new Date(w.windowEnd).toISOString(),
                   },
@@ -298,7 +299,7 @@ export async function generateDoctorWavesAction(
       { maxWait: 10000, timeout: 20000 }
     );
 
-    revalidatePath("/doctor/waves");
+    revalidatePath("/doctor/arrival-windows");
     revalidatePath("/doctor/queue");
     revalidatePath("/patient/appointments");
 
@@ -368,7 +369,7 @@ export async function createDoctorManualWaveAction(input: CreateDoctorManualWave
       },
     });
 
-    revalidatePath("/doctor/waves");
+    revalidatePath("/doctor/arrival-windows");
     return { success: true, waveId: wave.id, message: "Manual draft wave created successfully." };
   } catch (error) {
     console.error("[createDoctorManualWaveAction] Error:", error);
@@ -452,8 +453,8 @@ export async function publishDoctorWaveAction(input: PublishDoctorWaveInput) {
         template: "booking_confirmed",
         payload: {
           doctorName: "Practitioner",
-          startTime: appt.availability.startTime.toISOString(),
-          endTime: appt.availability.endTime.toISOString(),
+          startTime: effectiveSlot(appt).start.toISOString(),
+          endTime: effectiveSlot(appt).end.toISOString(),
           arrivalStartTime: wave.windowStart.toISOString(),
           arrivalEndTime: wave.windowEnd.toISOString(),
         },
@@ -461,8 +462,8 @@ export async function publishDoctorWaveAction(input: PublishDoctorWaveInput) {
       });
     }
 
-    revalidatePath("/doctor/waves");
-    revalidatePath(`/doctor/waves/${wave.id}`);
+    revalidatePath("/doctor/arrival-windows");
+    revalidatePath(`/doctor/arrival-windows/${wave.id}`);
     revalidatePath("/doctor/queue");
     revalidatePath("/patient/appointments");
 
@@ -513,7 +514,7 @@ export async function reassignDoctorWaveAppointmentAction(input: ReassignDoctorW
       data: { waveId: null },
     });
 
-    revalidatePath("/doctor/waves");
+    revalidatePath("/doctor/arrival-windows");
     return { success: true, message: "Appointment unassigned from wave." };
   }
 
@@ -571,8 +572,8 @@ export async function reassignDoctorWaveAppointmentAction(input: ReassignDoctorW
       }
     }
 
-    revalidatePath("/doctor/waves");
-    revalidatePath(`/doctor/waves/${targetWaveId}`);
+    revalidatePath("/doctor/arrival-windows");
+    revalidatePath(`/doctor/arrival-windows/${targetWaveId}`);
     revalidatePath("/doctor/queue");
     revalidatePath("/patient/appointments");
 
@@ -628,7 +629,7 @@ export async function deleteDoctorDraftWaveAction(input: DeleteDoctorDraftWaveIn
       });
     });
 
-    revalidatePath("/doctor/waves");
+    revalidatePath("/doctor/arrival-windows");
     return { success: true, message: "Draft wave deleted successfully." };
   } catch (error) {
     console.error("[deleteDoctorDraftWaveAction] Error deleting draft wave:", error);

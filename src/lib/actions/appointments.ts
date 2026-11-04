@@ -6,7 +6,6 @@ import { bookAppointmentSchema, type BookAppointmentInput } from "@/lib/validati
 import {
   Role,
   DoctorStatus,
-  SlotStatus,
   AppointmentStatus,
   NotificationType,
   PaymentStatus,
@@ -31,6 +30,7 @@ import { getPaymentsMode, isCashfreeConfigured } from "@/lib/env";
 import { bookWithPaymentHold, requestRefund } from "@/lib/payments/service";
 import { revalidatePath } from "next/cache";
 import { scheduleOpportunisticMaintenance } from "@/lib/maintenance";
+import { effectiveSlot } from "@/lib/scheduling";
 
 /**
  * Books an appointment for a patient.
@@ -67,7 +67,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
     };
   }
 
-  const { availabilityId, reason, stream } = parsed.data;
+  const { availabilityId, intervalStart, reason, stream } = parsed.data;
   const patientId = user.patient.id;
   const now = new Date();
   const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
@@ -76,6 +76,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
   const slot = await db.availability.findUnique({
     where: { id: availabilityId },
     include: {
+      schedule: { select: { durationMinutes: true } },
       doctor: {
         select: {
           id: true,
@@ -101,6 +102,23 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
       success: false,
       error: "Appointments must be booked at least 1 hour in advance.",
     };
+  }
+
+  if (slot.kind === "STREAM_WINDOW") {
+    if (!intervalStart) return { success: false, error: "Please choose an appointment interval." };
+    const interval = new Date(intervalStart);
+    const durationMs = (slot.schedule?.durationMinutes ?? 30) * 60_000;
+    const offset = interval.getTime() - slot.startTime.getTime();
+    if (
+      Number.isNaN(interval.getTime()) ||
+      offset < 0 ||
+      offset % durationMs !== 0 ||
+      interval.getTime() + durationMs > slot.endTime.getTime()
+    ) {
+      return { success: false, error: "The selected appointment interval is invalid." };
+    }
+  } else if (intervalStart) {
+    return { success: false, error: "This slot does not accept an appointment interval." };
   }
 
   // Abuse guard 1: Limit patient to at most 3 active upcoming appointments (CONFIRMED/CHECKED_IN/PENDING_PAYMENT, slot in future)
@@ -196,6 +214,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
       patientEmail: user.email,
       patientPhone: user.patient.phone,
       availabilityId,
+      intervalStart,
       reason,
       stream,
     });
@@ -221,19 +240,18 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
   try {
     const appointment = await db.$transaction(
       async (tx) => {
-        // 1. Conditionally lock and mark slot as BOOKED
-        const updatedSlot = await tx.availability.updateMany({
-          where: {
-            id: availabilityId,
-            status: SlotStatus.AVAILABLE,
-            startTime: { gt: oneHourFromNow },
-          },
-          data: {
-            status: SlotStatus.BOOKED,
-          },
-        });
+        const updatedSlot = await tx.$executeRaw`
+          UPDATE "availabilities"
+          SET "active_count" = "active_count" + 1,
+              "status" = CASE WHEN "active_count" + 1 >= "capacity" THEN 'BOOKED'::"SlotStatus" ELSE "status" END
+          WHERE "id" = ${availabilityId}
+            AND "kind" IN ('SINGLE'::"AvailabilityKind", 'WAVE_SLOT'::"AvailabilityKind", 'STREAM_WINDOW'::"AvailabilityKind")
+            AND "status" <> 'BLOCKED'::"SlotStatus"
+            AND "active_count" < "capacity"
+            AND "start_time" > ${oneHourFromNow}
+        `;
 
-        if (updatedSlot.count !== 1) {
+        if (updatedSlot !== 1) {
           throw new Error("SLOT_UNAVAILABLE");
         }
 
@@ -273,6 +291,10 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
             stream: stream as VisitStream,
             status: AppointmentStatus.CONFIRMED,
             waveId: waveIdToAssign,
+            slotStart: intervalStart ? new Date(intervalStart) : undefined,
+            slotEnd: intervalStart
+              ? new Date(new Date(intervalStart).getTime() + (slot.schedule?.durationMinutes ?? 30) * 60_000)
+              : undefined,
           },
         });
 
@@ -337,7 +359,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/dashboard");
     revalidatePath("/doctor/queue");
-    revalidatePath("/doctor/waves");
+    revalidatePath("/doctor/arrival-windows");
 
     return {
       success: true,
@@ -411,11 +433,12 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
   if (!appointment || appointment.patientId !== user.patient.id) {
     return { success: false, error: "Appointment not found or unauthorized." };
   }
+  const appointmentSlot = effectiveSlot(appointment);
 
   const cancelEval = canPatientCancel(
     {
       status: appointment.status,
-      startTime: appointment.availability.startTime,
+      startTime: appointmentSlot.start,
       disruptedAt: appointment.disruptedAt,
     },
     new Date()
@@ -453,7 +476,7 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
         await syncAppointmentReminders(tx, {
           appointmentId,
           userId: user.id,
-          slotStartTime: appointment.availability.startTime,
+          slotStartTime: appointmentSlot.start,
           status: AppointmentStatus.CANCELLED,
         });
 
@@ -479,7 +502,7 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
       }
     }
 
-    const slotTimeFormatted = `${formatSlotDateTimeRangeIST(appointment.availability.startTime, appointment.availability.endTime)} IST`;
+    const slotTimeFormatted = `${formatSlotDateTimeRangeIST(appointmentSlot.start, appointmentSlot.end)} IST`;
     const doctorName = appointment.availability.doctor.user.name ?? "Practitioner";
 
     // In-app Notifications
@@ -508,8 +531,8 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
       template: "appointment_cancelled",
       payload: {
         doctorName,
-        startTime: appointment.availability.startTime.toISOString(),
-        endTime: appointment.availability.endTime.toISOString(),
+        startTime: appointmentSlot.start.toISOString(),
+        endTime: appointmentSlot.end.toISOString(),
         cancelledBy: "PATIENT",
         refundSummary,
         refundInitiated: Boolean(refundSummary && !refundSummary.includes("not eligible")),

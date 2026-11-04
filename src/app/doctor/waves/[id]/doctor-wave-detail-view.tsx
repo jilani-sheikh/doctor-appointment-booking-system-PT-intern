@@ -101,7 +101,7 @@ export function DoctorWaveDetailView({
       const res = await deleteDoctorDraftWaveAction({ waveId: wave.id });
       if (res.success) {
         toast.success(res.message);
-        router.push(`/doctor/waves?date=${dateStr}`);
+        router.push(`/doctor/arrival-windows?date=${dateStr}`);
       } else {
         toast.error(res.error);
       }
@@ -147,18 +147,18 @@ export function DoctorWaveDetailView({
       {/* Back button and Header */}
       <div>
         <Link
-          href={`/doctor/waves?date=${dateStr}`}
+          href={`/doctor/arrival-windows?date=${dateStr}`}
           className={buttonVariants({ variant: "ghost", size: "sm", className: "gap-1 text-xs mb-3 -ml-2" })}
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to Waves
+          Back to Arrival Windows
         </Link>
 
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
           <div className="space-y-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300 uppercase tracking-wider flex items-center gap-1">
-                <Waves className="h-3.5 w-3.5" /> Wave Window
+                <Waves className="h-3.5 w-3.5" /> Wave
               </span>
               {isPublished ? (
                 <Badge variant="success" className="text-xs uppercase font-semibold">
@@ -191,7 +191,7 @@ export function DoctorWaveDetailView({
                   className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium"
                 >
                   <Send className="h-4 w-4" />
-                  Publish Wave
+                  Publish Arrival Window
                 </Button>
                 <Button
                   size="sm"
@@ -209,7 +209,7 @@ export function DoctorWaveDetailView({
         </div>
       </div>
 
-      {/* Performance Strip for Published Waves */}
+      {/* Performance Strip for Published Arrival Windows */}
       {isPublished && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Card className="border-border shadow-xs">
@@ -255,7 +255,7 @@ export function DoctorWaveDetailView({
         <CardContent>
           {appointments.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground text-sm">
-              No consultations currently assigned to this wave window.
+              No consultations currently assigned to this wave.
             </div>
           ) : (
             <div className="divide-y divide-border">
@@ -316,7 +316,7 @@ export function DoctorWaveDetailView({
                         className="gap-1 text-xs"
                       >
                         <ArrowRightLeft className="h-3 w-3" />
-                        Move Wave
+                        Move Arrival Window
                       </Button>
                     )}
                     <Button
@@ -336,18 +336,18 @@ export function DoctorWaveDetailView({
         </CardContent>
       </Card>
 
-      {/* Move Wave Modal */}
+      {/* Move Arrival Window Modal */}
       <Dialog open={Boolean(reassignAppt)} onOpenChange={(open) => !open && setReassignAppt(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Move Consultation to Another Wave</DialogTitle>
+            <DialogTitle>Move Consultation to Another Arrival Window</DialogTitle>
             <DialogDescription className="text-xs">
               Reassign {reassignAppt?.patientName} to an alternate wave window for {dateStr}.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 py-2">
-            <Label className="text-xs font-semibold">Choose Target Wave:</Label>
+            <Label className="text-xs font-semibold">Choose Target Arrival Window:</Label>
             <div className="space-y-2 max-h-60 overflow-y-auto">
               {siblingWaves.map((sw) => {
                 const isFull = sw.assignedCount >= sw.capacity;

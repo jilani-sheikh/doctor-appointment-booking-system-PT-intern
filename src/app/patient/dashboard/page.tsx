@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Calendar, User, Clock, ArrowRight, Activity, AlertCircle } from "lucide-react";
 import { formatDateIST, formatTimeIST, formatSlotRange, formatSlotDateTimeRangeIST, getTodayISTDateString, getISTDateString } from "@/lib/time";
+import { effectiveSlot } from "@/lib/scheduling";
 import { calculateQueueEstimates, EMERGENCY_DISCLAIMER, type QueueAppointmentItem } from "@/lib/queue";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
 import { DeleteProfileDialog } from "@/components/auth/delete-profile-dialog";
@@ -62,8 +63,8 @@ export default async function PatientDashboardPage() {
 
   const upcomingAppts = allAppointments.filter((a) => {
     const isFutureOrToday =
-      a.availability.startTime >= now ||
-      getISTDateString(a.availability.startTime) === todayISTStr;
+      effectiveSlot(a).start >= now ||
+      getISTDateString(effectiveSlot(a).start) === todayISTStr;
     const isActive =
       a.status === AppointmentStatus.PENDING ||
       a.status === AppointmentStatus.CONFIRMED ||
@@ -77,7 +78,7 @@ export default async function PatientDashboardPage() {
 
   // Find active appointment for today (if any)
   const todayActiveAppt = upcomingAppts.find(
-    (a) => getISTDateString(a.availability.startTime) === todayISTStr
+    (a) => getISTDateString(effectiveSlot(a).start) === todayISTStr
   );
 
   let todayQueueEstimate = null;
@@ -91,14 +92,14 @@ export default async function PatientDashboardPage() {
     });
 
     const todayDocAppts = docAppts.filter(
-      (a) => getISTDateString(a.availability.startTime) === todayISTStr
+      (a) => getISTDateString(effectiveSlot(a).start) === todayISTStr
     );
 
     const queueItems: QueueAppointmentItem[] = todayDocAppts.map((a) => ({
       id: a.id,
       status: a.status,
-      scheduledStart: a.availability.startTime,
-      scheduledEnd: a.availability.endTime,
+      scheduledStart: effectiveSlot(a).start,
+      scheduledEnd: effectiveSlot(a).end,
       actualStartAt: a.actualStartAt,
       actualEndAt: a.actualEndAt,
       checkedInAt: a.checkedInAt,
@@ -175,7 +176,7 @@ export default async function PatientDashboardPage() {
                 </span>
                 <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
                   <span className="font-medium text-foreground">
-                    Scheduled: {formatSlotRange(todayActiveAppt.availability.startTime, todayActiveAppt.availability.endTime)}
+                    Scheduled: {formatSlotRange(effectiveSlot(todayActiveAppt).start, effectiveSlot(todayActiveAppt).end)}
                   </span>
                   {todayActiveAppt.wave && todayActiveAppt.wave.status === "PUBLISHED" && (
                     <>
@@ -342,7 +343,7 @@ export default async function PatientDashboardPage() {
                   <div className="flex items-center gap-2 text-xs text-foreground font-semibold pt-1">
                     <Clock className="h-4 w-4 text-primary shrink-0" />
                     <span>
-                      {formatSlotDateTimeRangeIST(nextAppointment.availability.startTime, nextAppointment.availability.endTime)}
+                      {formatSlotDateTimeRangeIST(effectiveSlot(nextAppointment).start, effectiveSlot(nextAppointment).end)}
                     </span>
                   </div>
 

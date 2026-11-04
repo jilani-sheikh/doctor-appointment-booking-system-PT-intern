@@ -8,6 +8,7 @@ import { MAX_RESCHEDULE_COUNT } from "@/lib/appointment-status";
 import { toPublicSlotDto, type SerializedPublicSlot } from "@/lib/serializers";
 import { RescheduleView } from "./reschedule-view";
 import { RotateCcw, ArrowLeft } from "lucide-react";
+import { effectiveSlot } from "@/lib/scheduling";
 
 export const metadata: Metadata = {
   title: "Reschedule Consultation — Medrella",
@@ -44,6 +45,7 @@ export default async function ReschedulePage({
   }
 
   const doctor = appointment.availability.doctor;
+  const currentAppointmentSlot = effectiveSlot(appointment);
   const now = new Date();
   const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
   const fourteenDaysFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
@@ -54,6 +56,8 @@ export default async function ReschedulePage({
       doctorId: doctor.id,
       id: { not: appointment.availabilityId },
       status: SlotStatus.AVAILABLE,
+      activeCount: { lt: 1 },
+      kind: { not: "WAVE_PARENT" },
       startTime: { gt: oneHourFromNow, lte: fourteenDaysFromNow },
     },
     orderBy: { startTime: "asc" },
@@ -100,8 +104,8 @@ export default async function ReschedulePage({
         appointmentId={appointment.id}
         doctorName={doctor.user.name ?? "Practitioner"}
         specialization={doctor.specialization}
-        currentSlotStart={appointment.availability.startTime.toISOString()}
-        currentSlotEnd={appointment.availability.endTime.toISOString()}
+        currentSlotStart={currentAppointmentSlot.start.toISOString()}
+        currentSlotEnd={currentAppointmentSlot.end.toISOString()}
         rescheduleCount={appointment.rescheduleCount}
         maxRescheduleCount={MAX_RESCHEDULE_COUNT}
         isDisrupted={Boolean(appointment.disruptedAt)}

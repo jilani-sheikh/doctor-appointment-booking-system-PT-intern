@@ -5,7 +5,7 @@ dotenv.config();
 import ws from "ws";
 import { neonConfig } from "@neondatabase/serverless";
 import { PrismaNeon } from "@prisma/adapter-neon";
-import { PrismaClient, Role, DoctorStatus, SlotStatus } from "../src/generated/prisma/client";
+import { PrismaClient, Role, DoctorStatus, SlotStatus, AvailabilityKind } from "../src/generated/prisma/client";
 import { createISTDate, getTomorrowIST } from "../src/lib/time";
 
 // Standalone PrismaClient initialization for seeding (avoids importing server-only from src/lib/db)
@@ -231,9 +231,10 @@ async function main() {
 
         await prisma.availability.upsert({
           where: {
-            doctorId_startTime: {
+            doctorId_startTime_kind: {
               doctorId: doctor.id,
               startTime,
+              kind: AvailabilityKind.SINGLE,
             },
           },
           update: {

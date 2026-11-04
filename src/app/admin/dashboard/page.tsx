@@ -21,6 +21,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { formatDateTimeIST } from "@/lib/time";
+import { effectiveSlot } from "@/lib/scheduling";
 
 export const metadata: Metadata = {
   title: "Admin Dashboard — Medrella",
@@ -327,7 +328,7 @@ export default async function AdminDashboardPage() {
                         </span>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {formatDateTimeIST(a.availability.startTime)}
+                        {formatDateTimeIST(effectiveSlot(a).start)}
                       </TableCell>
                       <TableCell className="text-right">{getStatusBadge(a.status)}</TableCell>
                     </TableRow>

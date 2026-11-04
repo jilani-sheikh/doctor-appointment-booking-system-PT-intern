@@ -23,6 +23,7 @@ import { getAppUrl } from "@/lib/env";
 import { HOLD_MINUTES } from "@/lib/constants";
 import { formatSlotDateTimeRangeIST } from "@/lib/time";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
+import { effectiveSlot } from "@/lib/scheduling";
 
 export interface BookWithPaymentInput {
   patientId: string;
@@ -31,6 +32,7 @@ export interface BookWithPaymentInput {
   patientEmail?: string | null;
   patientPhone?: string | null;
   availabilityId: string;
+  intervalStart?: string;
   reason?: string;
   stream: string;
 }
@@ -50,7 +52,7 @@ export { computeCashfreeOrderExpiry };
  * Creates an unconfirmed appointment hold (PENDING_PAYMENT) and initiates Cashfree order.
  */
 export async function bookWithPaymentHold(input: BookWithPaymentInput): Promise<BookWithPaymentResult> {
-  const { patientId, userId, patientName, patientEmail, patientPhone, availabilityId, reason, stream } = input;
+  const { patientId, userId, patientName, patientEmail, patientPhone, availabilityId, intervalStart, reason, stream } = input;
 
   // 1. Phone validation (Amendment 6)
   const normalizedPhone = normalizeIndianPhoneNumber(patientPhone);
@@ -69,6 +71,7 @@ export async function bookWithPaymentHold(input: BookWithPaymentInput): Promise<
   const slot = await db.availability.findUnique({
     where: { id: availabilityId },
     include: {
+      schedule: { select: { durationMinutes: true } },
       doctor: {
         select: {
           id: true,
@@ -96,17 +99,18 @@ export async function bookWithPaymentHold(input: BookWithPaymentInput): Promise<
   try {
     const txResult = await db.$transaction(
       async (tx) => {
-        // Conditionally claim slot: AVAILABLE -> BOOKED
-        const slotUpdate = await tx.availability.updateMany({
-          where: {
-            id: availabilityId,
-            status: SlotStatus.AVAILABLE,
-            startTime: { gt: oneHourFromNow },
-          },
-          data: { status: SlotStatus.BOOKED },
-        });
+        const slotUpdate = await tx.$executeRaw`
+          UPDATE "availabilities"
+          SET "active_count" = "active_count" + 1,
+              "status" = CASE WHEN "active_count" + 1 >= "capacity" THEN 'BOOKED'::"SlotStatus" ELSE "status" END
+          WHERE "id" = ${availabilityId}
+            AND "kind" IN ('SINGLE'::"AvailabilityKind", 'WAVE_SLOT'::"AvailabilityKind", 'STREAM_WINDOW'::"AvailabilityKind")
+            AND "status" <> 'BLOCKED'::"SlotStatus"
+            AND "active_count" < "capacity"
+            AND "start_time" > ${oneHourFromNow}
+        `;
 
-        if (slotUpdate.count !== 1) {
+        if (slotUpdate !== 1) {
           throw new Error("SLOT_UNAVAILABLE");
         }
 
@@ -119,6 +123,10 @@ export async function bookWithPaymentHold(input: BookWithPaymentInput): Promise<
             stream: stream as VisitStream,
             status: AppointmentStatus.PENDING_PAYMENT,
             holdExpiresAt,
+            slotStart: intervalStart ? new Date(intervalStart) : undefined,
+            slotEnd: intervalStart
+              ? new Date(new Date(intervalStart).getTime() + (slot.schedule?.durationMinutes ?? 30) * 60_000)
+              : undefined,
           },
         });
 
@@ -367,8 +375,9 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
   }
 
   const doctor = appointment.availability.doctor;
-  const slotStartTime = appointment.availability.startTime;
-  const slotEndTime = appointment.availability.endTime;
+  const appointmentSlot = effectiveSlot(appointment);
+  const slotStartTime = appointmentSlot.start;
+  const slotEndTime = appointmentSlot.end;
 
   let waveIdToAssign: string | null = null;
   let assignedWaveArrivalWindow: string | null = null;
@@ -521,7 +530,7 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/dashboard");
     revalidatePath("/doctor/queue");
-    revalidatePath("/doctor/waves");
+    revalidatePath("/doctor/arrival-windows");
   } catch {
     // Ignore revalidate errors in non-request contexts
   }
@@ -870,7 +879,7 @@ export async function requestRefund(params: RequestRefundParams): Promise<Reques
     const policyResult = calculateRefundPolicy({
       paidAmountPaise: totalPaidPaise,
       reason,
-      slotStartTime: payment.appointment.availability.startTime,
+      slotStartTime: effectiveSlot(payment.appointment).start,
       cancelledAt: new Date(),
       isDisrupted: Boolean(payment.appointment.disruptedAt),
       priorNonFailedRefundsPaise: priorRefundsPaise,

@@ -67,6 +67,10 @@ export default async function DoctorDetailPage({ params }: DoctorDetailPageProps
     id: string;
     startTime: Date;
     endTime: Date;
+    kind: "SINGLE" | "WAVE_PARENT" | "WAVE_SLOT" | "STREAM_WINDOW";
+    capacity: number;
+    activeCount: number;
+    schedule: { durationMinutes: number } | null;
   }
 
   let doctor = null;
@@ -101,6 +105,7 @@ export default async function DoctorDetailPage({ params }: DoctorDetailPageProps
       where: {
         doctorId: id,
         status: SlotStatus.AVAILABLE,
+        kind: { not: "WAVE_PARENT" },
         startTime: {
           gte: now,
           lte: fourteenDaysFromNow,
@@ -110,6 +115,10 @@ export default async function DoctorDetailPage({ params }: DoctorDetailPageProps
         id: true,
         startTime: true,
         endTime: true,
+        kind: true,
+        capacity: true,
+        activeCount: true,
+        schedule: { select: { durationMinutes: true } },
       },
       orderBy: {
         startTime: "asc",

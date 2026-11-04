@@ -11,6 +11,7 @@ import {
   renderAppointmentReminderEmail,
   renderDoctorNewBookingEmail,
 } from "@/lib/email/templates/index";
+import { effectiveSlot } from "@/lib/scheduling";
 
 // Re-export in-app notification helpers
 export { createNotification, createManyNotifications } from "@/lib/notifications";
@@ -180,7 +181,7 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
     if (
       !delivery.appointment ||
       delivery.appointment.status !== AppointmentStatus.CONFIRMED ||
-      delivery.appointment.availability.startTime <= new Date()
+      effectiveSlot(delivery.appointment).start <= new Date()
     ) {
       await db.notificationDelivery.update({
         where: { id: deliveryId },
@@ -191,6 +192,7 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
   }
 
   const payload = (delivery.payload || {}) as unknown as DeliveryPayload;
+  const appointmentSlot = delivery.appointment ? effectiveSlot(delivery.appointment) : null;
   let emailContent: { html: string; text: string } | null = null;
   let subject = "Medrella Notification";
 
@@ -201,11 +203,11 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
         patientName: delivery.user.name || "Patient",
         doctorName: payload.doctorName || "Practitioner",
         specialization: payload.specialization || "General",
-        startTime: new Date(payload.startTime || delivery.appointment?.availability.startTime || Date.now()),
+        startTime: new Date(payload.startTime || appointmentSlot?.start || Date.now()),
         endTime: payload.endTime
           ? new Date(payload.endTime)
-          : delivery.appointment?.availability.endTime
-          ? new Date(delivery.appointment.availability.endTime)
+          : appointmentSlot?.end
+          ? new Date(appointmentSlot.end)
           : undefined,
         arrivalWindow: payload.arrivalWindow,
       });
@@ -229,11 +231,11 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
       emailContent = renderAppointmentCancelledEmail({
         patientName: delivery.user.name || "Patient",
         doctorName: payload.doctorName || "Practitioner",
-        startTime: new Date(payload.startTime || delivery.appointment?.availability.startTime || Date.now()),
+        startTime: new Date(payload.startTime || appointmentSlot?.start || Date.now()),
         endTime: payload.endTime
           ? new Date(payload.endTime)
-          : delivery.appointment?.availability.endTime
-          ? new Date(delivery.appointment.availability.endTime)
+          : appointmentSlot?.end
+          ? new Date(appointmentSlot.end)
           : undefined,
         cancelledBy: payload.cancelledBy || "SYSTEM",
         refundSummary: payload.refundSummary,
@@ -278,13 +280,13 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
       emailContent = renderAppointmentReminderEmail({
         patientName: delivery.user.name || "Patient",
         doctorName: payload.doctorName || "Practitioner",
-        startTime: new Date(payload.slotStartTime || payload.startTime || delivery.appointment?.availability.startTime || Date.now()),
+        startTime: new Date(payload.slotStartTime || payload.startTime || appointmentSlot?.start || Date.now()),
         endTime: payload.slotEndTime
           ? new Date(payload.slotEndTime)
           : payload.endTime
           ? new Date(payload.endTime)
-          : delivery.appointment?.availability.endTime
-          ? new Date(delivery.appointment.availability.endTime)
+          : appointmentSlot?.end
+          ? new Date(appointmentSlot.end)
           : undefined,
         offsetMinutes: payload.offsetMinutes || 120,
       });
@@ -295,11 +297,11 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
       emailContent = renderDoctorNewBookingEmail({
         doctorName: delivery.user.name || "Doctor",
         patientName: payload.patientName || "Patient",
-        startTime: new Date(payload.startTime || delivery.appointment?.availability.startTime || Date.now()),
+        startTime: new Date(payload.startTime || appointmentSlot?.start || Date.now()),
         endTime: payload.endTime
           ? new Date(payload.endTime)
-          : delivery.appointment?.availability.endTime
-          ? new Date(delivery.appointment.availability.endTime)
+          : appointmentSlot?.end
+          ? new Date(appointmentSlot.end)
           : undefined,
       });
       break;

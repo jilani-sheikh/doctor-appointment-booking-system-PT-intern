@@ -4,6 +4,7 @@ import { requireRole } from "@/lib/auth";
 import { Role, AppointmentStatus } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { getTodayISTDateString, getISTDateString } from "@/lib/time";
+import { effectiveSlot } from "@/lib/scheduling";
 import { calculateQueueEstimates, type QueueAppointmentItem } from "@/lib/queue";
 import { AppointmentsView } from "./appointments-view";
 import { toPatientAppointmentDto, type SerializedPatientAppointment } from "@/lib/serializers";
@@ -65,7 +66,7 @@ export default async function PatientAppointmentsPage() {
   // Calculate doctor queue estimates for any appointment scheduled for today
   const doctorIdsToday = new Set<string>();
   for (const a of rawAppointments) {
-    if (getISTDateString(a.availability.startTime) === todayISTStr) {
+    if (getISTDateString(effectiveSlot(a).start) === todayISTStr) {
       doctorIdsToday.add(a.availability.doctorId);
     }
   }
@@ -82,14 +83,14 @@ export default async function PatientAppointmentsPage() {
     });
 
     const todayDocAppts = docAppts.filter(
-      (a) => getISTDateString(a.availability.startTime) === todayISTStr
+      (a) => getISTDateString(effectiveSlot(a).start) === todayISTStr
     );
 
     const queueItems: QueueAppointmentItem[] = todayDocAppts.map((a) => ({
       id: a.id,
       status: a.status,
-      scheduledStart: a.availability.startTime,
-      scheduledEnd: a.availability.endTime,
+      scheduledStart: effectiveSlot(a).start,
+      scheduledEnd: effectiveSlot(a).end,
       actualStartAt: a.actualStartAt,
       actualEndAt: a.actualEndAt,
       checkedInAt: a.checkedInAt,
@@ -102,8 +103,9 @@ export default async function PatientAppointmentsPage() {
   const past: SerializedPatientAppointment[] = [];
 
   for (const appt of rawAppointments) {
-    const isToday = getISTDateString(appt.availability.startTime) === todayISTStr;
-    const isFuture = appt.availability.startTime >= now;
+    const appointmentSlot = effectiveSlot(appt);
+    const isToday = getISTDateString(appointmentSlot.start) === todayISTStr;
+    const isFuture = appointmentSlot.start >= now;
     const isActiveStatus =
       appt.status === AppointmentStatus.PENDING ||
       appt.status === AppointmentStatus.PENDING_PAYMENT ||

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const bookAppointmentSchema = z.object({
   availabilityId: z.string().min(1, "Availability slot ID is required"),
+  intervalStart: z.string().datetime().optional(),
   stream: z
     .enum(["NEW_CONSULTATION", "FOLLOW_UP"])
     .default("NEW_CONSULTATION"),

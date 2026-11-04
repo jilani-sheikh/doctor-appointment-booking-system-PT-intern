@@ -16,6 +16,7 @@ import {
   canDoctorNoShow,
 } from "@/lib/appointment-status";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
+import { effectiveSlot } from "@/lib/scheduling";
 
 /**
  * Minimal serializable user representation passed across the Server-to-Client component boundary.
@@ -171,6 +172,8 @@ export function toPatientAppointmentDto(
     rescheduleCount: number;
     disruptedAt?: Date | null;
     disruptionReason?: string | null;
+    slotStart?: Date | null;
+    slotEnd?: Date | null;
     wave?: {
       windowStart: Date;
       windowEnd: Date;
@@ -205,11 +208,16 @@ export function toPatientAppointmentDto(
     queuePosition: number;
   } | null
 ): SerializedPatientAppointment {
+  const appointmentSlot = effectiveSlot({
+    slotStart: appt.slotStart ?? null,
+    slotEnd: appt.slotEnd ?? null,
+    availability: appt.availability,
+  });
   const checkInEval = canPatientCheckIn(
     {
       status: appt.status,
-      startTime: appt.availability.startTime,
-      endTime: appt.availability.endTime,
+      startTime: appointmentSlot.start,
+      endTime: appointmentSlot.end,
     },
     now
   );
@@ -217,7 +225,7 @@ export function toPatientAppointmentDto(
   const cancelEval = canPatientCancel(
     {
       status: appt.status,
-      startTime: appt.availability.startTime,
+      startTime: appointmentSlot.start,
       disruptedAt: appt.disruptedAt,
     },
     now
@@ -226,7 +234,7 @@ export function toPatientAppointmentDto(
   const rescheduleEval = canPatientReschedule(
     {
       status: appt.status,
-      startTime: appt.availability.startTime,
+      startTime: appointmentSlot.start,
       rescheduleCount: appt.rescheduleCount,
       disruptedAt: appt.disruptedAt,
     },
@@ -248,8 +256,8 @@ export function toPatientAppointmentDto(
     createdAt: appt.createdAt.toISOString(),
     cancelledAt: appt.cancelledAt ? appt.cancelledAt.toISOString() : null,
     checkedInAt: appt.checkedInAt ? appt.checkedInAt.toISOString() : null,
-    slotStartTime: appt.availability.startTime.toISOString(),
-    slotEndTime: appt.availability.endTime.toISOString(),
+    slotStartTime: appointmentSlot.start.toISOString(),
+    slotEndTime: appointmentSlot.end.toISOString(),
     canCheckIn: checkInEval.allowed,
     canCancel: cancelEval.allowed,
     canReschedule: rescheduleEval.allowed,
@@ -306,6 +314,8 @@ export function toDoctorAppointmentDto(
     createdAt: Date;
     cancelledAt?: Date | null;
     checkedInAt?: Date | null;
+    slotStart?: Date | null;
+    slotEnd?: Date | null;
     availability: {
       startTime: Date;
       endTime: Date;
@@ -321,10 +331,11 @@ export function toDoctorAppointmentDto(
   },
   now: Date
 ): SerializedDoctorAppointment {
+  const appointmentSlot = effectiveSlot({ slotStart: appt.slotStart ?? null, slotEnd: appt.slotEnd ?? null, availability: appt.availability });
   const noShowEval = canDoctorNoShow(
     {
       status: appt.status,
-      startTime: appt.availability.startTime,
+      startTime: appointmentSlot.start,
     },
     now
   );
@@ -337,9 +348,9 @@ export function toDoctorAppointmentDto(
     createdAt: appt.createdAt.toISOString(),
     cancelledAt: appt.cancelledAt ? appt.cancelledAt.toISOString() : null,
     checkedInAt: appt.checkedInAt ? appt.checkedInAt.toISOString() : null,
-    slotStartTime: appt.availability.startTime.toISOString(),
-    slotEndTime: appt.availability.endTime.toISOString(),
-    isPastStartTime: now >= appt.availability.startTime,
+    slotStartTime: appointmentSlot.start.toISOString(),
+    slotEndTime: appointmentSlot.end.toISOString(),
+    isPastStartTime: now >= appointmentSlot.start,
     canNoShow: noShowEval.allowed,
     patient: {
       id: appt.patient.id,
@@ -395,6 +406,8 @@ export function toDoctorQueueItemDto(
     actualStartAt?: Date | null;
     actualEndAt?: Date | null;
     checkedInAt?: Date | null;
+    slotStart?: Date | null;
+    slotEnd?: Date | null;
     availability: {
       startTime: Date;
       endTime: Date;
@@ -415,11 +428,12 @@ export function toDoctorQueueItemDto(
   },
   now: Date
 ): SerializedDoctorQueueItem {
+  const appointmentSlot = effectiveSlot({ slotStart: appt.slotStart ?? null, slotEnd: appt.slotEnd ?? null, availability: appt.availability });
   const canMarkArrived = appt.status === "CONFIRMED";
   const canStartConsultation = appt.status === "CHECKED_IN";
   const canEndConsultation = appt.status === "IN_CONSULTATION";
   const noShowEval = canDoctorNoShow(
-    { status: appt.status, startTime: appt.availability.startTime },
+    { status: appt.status, startTime: appointmentSlot.start },
     now
   );
   const canCancel =
@@ -440,8 +454,8 @@ export function toDoctorQueueItemDto(
     reason: appt.reason,
     stream: appt.stream,
     status: appt.status,
-    scheduledStart: appt.availability.startTime.toISOString(),
-    scheduledEnd: appt.availability.endTime.toISOString(),
+    scheduledStart: appointmentSlot.start.toISOString(),
+    scheduledEnd: appointmentSlot.end.toISOString(),
     actualStartAt: appt.actualStartAt ? appt.actualStartAt.toISOString() : null,
     actualEndAt: appt.actualEndAt ? appt.actualEndAt.toISOString() : null,
     checkedInAt: appt.checkedInAt ? appt.checkedInAt.toISOString() : null,
@@ -667,17 +681,29 @@ export interface SerializedPublicSlot {
   id: string;
   startTime: string; // ISO string
   endTime: string;   // ISO string
+  kind: "SINGLE" | "WAVE_PARENT" | "WAVE_SLOT" | "STREAM_WINDOW";
+  capacity: number;
+  activeCount: number;
+  durationMinutes: number | null;
 }
 
 export function toPublicSlotDto(slot: {
   id: string;
   startTime: Date;
   endTime: Date;
+  kind: "SINGLE" | "WAVE_PARENT" | "WAVE_SLOT" | "STREAM_WINDOW";
+  capacity: number;
+  activeCount: number;
+  schedule?: { durationMinutes: number } | null;
 }): SerializedPublicSlot {
   return {
     id: slot.id,
     startTime: slot.startTime.toISOString(),
     endTime: slot.endTime.toISOString(),
+    kind: slot.kind,
+    capacity: slot.capacity,
+    activeCount: slot.activeCount,
+    durationMinutes: slot.schedule?.durationMinutes ?? null,
   };
 }
 
@@ -803,12 +829,11 @@ export function toPaymentDto(payment: {
     payment.appointment?.availability?.doctor?.user?.name ?? "Practitioner";
   const doctorSpecialization =
     payment.appointment?.availability?.doctor?.specialization ?? "General";
-  const slotStartTime = payment.appointment?.availability?.startTime
-    ? payment.appointment.availability.startTime.toISOString()
-    : payment.createdAt.toISOString();
-  const slotEndTime = payment.appointment?.availability?.endTime
-    ? payment.appointment.availability.endTime.toISOString()
+  const appointmentSlot = payment.appointment?.availability?.startTime
+    ? effectiveSlot(payment.appointment)
     : null;
+  const slotStartTime = appointmentSlot?.start.toISOString() ?? payment.createdAt.toISOString();
+  const slotEndTime = appointmentSlot?.end.toISOString() ?? null;
 
   return {
     id: payment.id,
@@ -836,4 +861,3 @@ export function toPaymentDto(payment: {
     refunds,
   };
 }
-
