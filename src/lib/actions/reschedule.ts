@@ -163,8 +163,6 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
         newEndTime: newSlot.endTime.toISOString(),
       },
       dedupeKey: `email:rescheduled:${appointmentId}:${newSlot.startTime.getTime()}`,
-      whatsappTemplate: "appointment_rescheduled",
-      whatsappDedupeKey: `whatsapp:appointment_rescheduled:${appointmentId}:${newSlot.startTime.getTime()}`,
     });
 
     // Notify doctor

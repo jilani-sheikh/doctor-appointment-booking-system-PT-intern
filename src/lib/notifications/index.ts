@@ -1,8 +1,6 @@
 import { db } from "@/lib/db";
 import { DeliveryStatus, NotificationChannel, AppointmentStatus, type Prisma } from "@/generated/prisma/client";
 import { sendEmail } from "@/lib/email/client";
-import { getWhatsAppMode } from "@/lib/env";
-import { sendWhatsAppMessage } from "@/lib/notifications/whatsapp/channel";
 import {
   renderBookingConfirmedEmail,
   renderPaymentReceiptEmail,
@@ -63,23 +61,10 @@ export interface EnqueueEmailParams {
 
 export interface EnqueuePatientNotificationParams extends Omit<EnqueueEmailParams, "dedupeKey"> {
   dedupeKey: string;
-  whatsappTemplate?: "appointment_confirmed" | "appointment_cancelled" | "appointment_rescheduled" | "arrival_window" | "appointment_reminder" | "payment_receipt" | "refund_update";
-  whatsappDedupeKey?: string;
-}
-
-function getWhatsAppEnqueueErrorCategory(error: unknown): string {
-  if (error && typeof error === "object" && "code" in error && typeof error.code === "string") {
-    return `prisma_${error.code}`;
-  }
-  if (error instanceof Error && error.name) {
-    return error.name;
-  }
-  return "unknown";
 }
 
 /**
- * Enqueues the patient email and WhatsApp rows independently. A provider or database
- * failure in one channel must never prevent the other channel or the caller.
+ * Enqueues the patient email without allowing an outbox failure to interrupt the caller.
  */
 export async function enqueuePatientNotifications(
   txOrDb: Prisma.TransactionClient | typeof db,
@@ -91,73 +76,7 @@ export async function enqueuePatientNotifications(
   } catch (error) {
     console.error("[Outbox] Patient email enqueue failed:", error);
   }
-
-  let whatsapp;
-  const whatsappMode = getWhatsAppMode();
-  const whatsappTemplate = params.whatsappTemplate;
-  const hasWhatsAppTemplate = Boolean(whatsappTemplate);
-  console.info("[Outbox] WhatsApp enqueue decision:", {
-    mode: whatsappMode,
-    templateSupplied: hasWhatsAppTemplate,
-  });
-
-  if (whatsappMode === "twilio" && whatsappTemplate) {
-    try {
-      const recipient = await txOrDb.user.findUnique({
-        where: { id: params.userId },
-        select: { role: true, patient: { select: { whatsappOptIn: true } } },
-      });
-      const patientLookupSucceeded = Boolean(recipient);
-      const patientRoleEligible = recipient?.role?.toString() === "PATIENT";
-      const optedIn = recipient?.patient?.whatsappOptIn === true;
-      console.info("[Outbox] WhatsApp enqueue eligibility:", {
-        patientLookupSucceeded,
-        patientRoleEligible,
-        optedIn,
-      });
-
-      if (patientRoleEligible && optedIn) {
-        const dedupeKey = params.whatsappDedupeKey ?? `whatsapp:${whatsappTemplate}:${params.appointmentId ?? "none"}`;
-        const existingDelivery = await txOrDb.notificationDelivery.findUnique({
-          where: { dedupeKey },
-          select: { id: true },
-        });
-        whatsapp = await txOrDb.notificationDelivery.upsert({
-          where: { dedupeKey },
-          create: {
-            userId: params.userId,
-            appointmentId: params.appointmentId ?? null,
-            channel: NotificationChannel.WHATSAPP,
-            template: whatsappTemplate,
-            payload: params.payload as Prisma.InputJsonValue,
-            dedupeKey,
-            scheduledFor: params.scheduledFor ?? new Date(),
-            status: DeliveryStatus.PENDING,
-          },
-          update: {},
-        });
-        console.info("[Outbox] WhatsApp delivery row result:", {
-          rowCreated: !existingDelivery,
-        });
-
-        if (txOrDb === db && whatsapp.status === DeliveryStatus.PENDING) {
-          try {
-            await dispatchWhatsAppDelivery(whatsapp.id);
-          } catch (error) {
-            console.error("[Outbox] Immediate WhatsApp dispatch failed:", {
-              errorCategory: getWhatsAppEnqueueErrorCategory(error),
-            });
-          }
-        }
-      }
-    } catch (error) {
-      console.error("[Outbox] Patient WhatsApp enqueue failed:", {
-        errorCategory: getWhatsAppEnqueueErrorCategory(error),
-      });
-    }
-  }
-
-  return { email, whatsapp };
+  return { email };
 }
 
 /**
@@ -212,7 +131,7 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
           name: true,
           role: true,
           emailRemindersEnabled: true,
-          patient: { select: { phone: true, whatsappOptIn: true } },
+          patient: { select: { phone: true } },
         },
       },
       appointment: {
@@ -226,92 +145,15 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
   if (!delivery) return false;
 
   if (delivery.channel === NotificationChannel.WHATSAPP) {
-    console.info("[WhatsApp] Dispatch started:", {
-      template: delivery.template,
-      attempts: delivery.attempts,
-    });
-    if (delivery.user?.role?.toString() !== "PATIENT") {
-      console.info("[WhatsApp] Dispatch skipped:", { reason: "ineligible_role" });
-      await db.notificationDelivery.update({ where: { id: deliveryId }, data: { status: DeliveryStatus.SKIPPED, lastError: "WhatsApp is available only to patients" } });
-      return true;
-    }
-
-    if (!delivery.user.patient?.whatsappOptIn) {
-      console.info("[WhatsApp] Dispatch cancelled:", { reason: "opted_out" });
-      await db.notificationDelivery.update({ where: { id: deliveryId }, data: { status: DeliveryStatus.CANCELLED, lastError: "WhatsApp opted out by patient" } });
-      return true;
-    }
-    if (
-      (delivery.template === "reminder" || delivery.template === "appointment_reminder") &&
-      (!delivery.appointment ||
-        delivery.appointment.status !== AppointmentStatus.CONFIRMED ||
-        delivery.appointment.availability.startTime <= new Date())
-    ) {
-      console.info("[WhatsApp] Dispatch skipped:", { reason: "appointment_inactive_or_expired" });
-      await db.notificationDelivery.update({ where: { id: deliveryId }, data: { status: DeliveryStatus.SKIPPED, lastError: "Appointment not active or slot expired" } });
-      return true;
-    }
-    const whatsappPayload = {
-      ...(delivery.payload as Parameters<typeof sendWhatsAppMessage>[1]),
-      ...(delivery.appointment?.availability.doctor.user.name
-        ? { doctorName: delivery.appointment.availability.doctor.user.name }
-        : {}),
-    };
-    let result;
-    try {
-      result = await sendWhatsAppMessage(
-        delivery.template as Parameters<typeof sendWhatsAppMessage>[0],
-        whatsappPayload,
-        delivery.user.patient.phone
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "WhatsApp configuration error";
-      console.error("[WhatsApp] Provider call failed:", {
-        template: delivery.template,
-        errorCategory: getWhatsAppEnqueueErrorCategory(error),
-      });
-      await db.notificationDelivery.update({
-        where: { id: deliveryId },
-        data: { status: DeliveryStatus.FAILED, attempts: delivery.attempts + 1, lastError: message, lockedAt: null },
-      });
-      return false;
-    }
-    if (result.success) {
-      console.info("[WhatsApp] Provider accepted message:", {
-        template: delivery.template,
-        httpStatus: result.httpStatus,
-      });
-      await db.notificationDelivery.update({ where: { id: deliveryId }, data: { status: DeliveryStatus.SENT, sentAt: new Date(), lockedAt: null } });
-      return true;
-    }
-    const attempts = delivery.attempts + 1;
-    const finalFailure = !result.retryable || attempts >= 5;
-    console.warn("[WhatsApp] Provider rejected message:", {
-      template: delivery.template,
-      httpStatus: result.httpStatus,
-      errorCode: result.errorCode ?? "none",
-      retryable: result.retryable,
-      finalFailure,
-    });
-    if (result.errorCode) {
-      console.warn(`[WhatsApp] delivery=${deliveryId} message=${delivery.template} status=${result.httpStatus} code=${result.errorCode}`);
-    } else if (result.error === "invalid phone") {
-      await db.notificationDelivery.update({ where: { id: deliveryId }, data: { status: DeliveryStatus.SKIPPED, lastError: "invalid phone", lockedAt: null } });
-      return true;
-    } else {
-      console.warn(`[WhatsApp] delivery=${deliveryId} message=${delivery.template} status=${result.httpStatus} code=none`);
-    }
     await db.notificationDelivery.update({
       where: { id: deliveryId },
       data: {
-        status: finalFailure ? DeliveryStatus.FAILED : DeliveryStatus.PENDING,
-        attempts,
-        scheduledFor: finalFailure ? delivery.scheduledFor : new Date(Date.now() + Math.min(60, 2 ** attempts) * 60 * 1000),
-        lastError: result.error || "WhatsApp delivery failed",
+        status: DeliveryStatus.CANCELLED,
+        lastError: "WhatsApp integration removed",
         lockedAt: null,
       },
     });
-    return false;
+    return true;
   }
 
   // 1. If recipient has no email, mark SKIPPED
@@ -508,46 +350,6 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
 }
 
 /**
- * Claims and dispatches one WhatsApp row without touching other channels.
- * The conditional update makes duplicate payment/webhook/return flows safe.
- */
-export async function dispatchWhatsAppDelivery(deliveryId: string): Promise<boolean> {
-  const claimed = await db.notificationDelivery.updateMany({
-    where: {
-      id: deliveryId,
-      channel: NotificationChannel.WHATSAPP,
-      status: DeliveryStatus.PENDING,
-      scheduledFor: { lte: new Date() },
-    },
-    data: {
-      status: DeliveryStatus.PROCESSING,
-      lockedAt: new Date(),
-    },
-  });
-
-  if (claimed.count !== 1) {
-    return false;
-  }
-
-  try {
-    return await deliverSingleNotification(deliveryId);
-  } catch (error) {
-    console.error(`[Outbox] Error dispatching WhatsApp row ${deliveryId}:`, error);
-    await db.notificationDelivery.updateMany({
-      where: {
-        id: deliveryId,
-        status: DeliveryStatus.PROCESSING,
-      },
-      data: {
-        status: DeliveryStatus.PENDING,
-        lockedAt: null,
-      },
-    });
-    throw error;
-  }
-}
-
-/**
  * Dispatches due outbox notifications (used by cron tick).
  * Atomically locks rows using SKIP LOCKED to prevent concurrent duplicate delivery.
  */
@@ -580,6 +382,7 @@ export async function dispatchDueNotifications(limit = 50): Promise<{
     WHERE "id" IN (
       SELECT "id" FROM "notification_deliveries"
       WHERE "status" = 'PENDING'::"DeliveryStatus"
+        AND "channel" <> 'WHATSAPP'::"NotificationChannel"
         AND "scheduled_for" <= NOW()
       ORDER BY "scheduled_for" ASC
       LIMIT ${limit}

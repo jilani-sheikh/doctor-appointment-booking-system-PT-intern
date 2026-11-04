@@ -59,12 +59,6 @@ const envSchema = z.object({
   EMAIL_FROM: z.string().optional(),
   CRON_SECRET: z.string().optional(),
   REMINDER_OFFSETS_MINUTES: z.string().optional(),
-  WHATSAPP_PROVIDER: z.enum(["twilio"]).default("twilio"),
-  WHATSAPP_MODE: z.enum(["disabled", "twilio"]).default("disabled"),
-  TWILIO_ACCOUNT_SID: z.string().optional(),
-  TWILIO_AUTH_TOKEN: z.string().optional(),
-  TWILIO_WHATSAPP_FROM: z.string().optional(),
-  WHATSAPP_DEFAULT_COUNTRY_CODE: z.string().default("91"),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -203,80 +197,6 @@ export function getPaymentsMode(): "disabled" | "cashfree" {
 export function getAppUrl(): string {
   const raw = process.env.APP_URL?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim() || "http://localhost:3000";
   return raw.replace(/\/+$/, "");
-}
-
-export function getWhatsAppMode(): "disabled" | "twilio" {
-  return process.env.WHATSAPP_MODE?.trim().toLowerCase() === "twilio" ? "twilio" : "disabled";
-}
-
-export function getWhatsAppProvider(): "twilio" {
-  return "twilio";
-}
-
-function requiredWhatsAppVariable(
-  name:
-    | "TWILIO_ACCOUNT_SID"
-    | "TWILIO_AUTH_TOKEN"
-    | "TWILIO_WHATSAPP_FROM"
-    | "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_CONFIRMED"
-    | "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_CANCELLED"
-    | "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_RESCHEDULED"
-    | "TWILIO_WHATSAPP_CONTENT_SID_ARRIVAL_WINDOW"
-    | "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_REMINDER"
-    | "TWILIO_WHATSAPP_CONTENT_SID_PAYMENT_RECEIPT"
-    | "TWILIO_WHATSAPP_CONTENT_SID_REFUND_UPDATE"
-): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`[Medrella Config Error] Missing required environment variable: ${name}. Configure ${name} to enable WhatsApp notifications.`);
-  }
-  return value;
-}
-
-export function getTwilioConfig() {
-  return {
-    accountSid: requiredWhatsAppVariable("TWILIO_ACCOUNT_SID"),
-    authToken: requiredWhatsAppVariable("TWILIO_AUTH_TOKEN"),
-    from: requiredWhatsAppVariable("TWILIO_WHATSAPP_FROM"),
-  };
-}
-
-export type TwilioWhatsAppTemplate =
-  | "appointment_confirmed"
-  | "appointment_cancelled"
-  | "appointment_rescheduled"
-  | "arrival_window"
-  | "appointment_reminder"
-  | "payment_receipt"
-  | "refund_update";
-
-const TWILIO_CONTENT_SID_VARIABLES: Record<TwilioWhatsAppTemplate, Parameters<typeof requiredWhatsAppVariable>[0]> = {
-  appointment_confirmed: "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_CONFIRMED",
-  appointment_cancelled: "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_CANCELLED",
-  appointment_rescheduled: "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_RESCHEDULED",
-  arrival_window: "TWILIO_WHATSAPP_CONTENT_SID_ARRIVAL_WINDOW",
-  appointment_reminder: "TWILIO_WHATSAPP_CONTENT_SID_APPOINTMENT_REMINDER",
-  payment_receipt: "TWILIO_WHATSAPP_CONTENT_SID_PAYMENT_RECEIPT",
-  refund_update: "TWILIO_WHATSAPP_CONTENT_SID_REFUND_UPDATE",
-};
-
-export function getTwilioWhatsAppContentSid(template: TwilioWhatsAppTemplate): string {
-  const variable = TWILIO_CONTENT_SID_VARIABLES[template];
-  const value = requiredWhatsAppVariable(variable);
-  if (!/^HX[0-9a-fA-F]{32}$/.test(value)) {
-    throw new Error(
-      `[Medrella Config Error] Invalid ${variable}. Configure the approved Twilio Content Template SID (HX...) for ${template}.`
-    );
-  }
-  return value;
-}
-
-export function getWhatsAppDefaultCountryCode(): string {
-  const value = process.env.WHATSAPP_DEFAULT_COUNTRY_CODE?.trim() || "91";
-  if (!/^\d{1,3}$/.test(value)) {
-    throw new Error("[Medrella Config Error] Invalid WHATSAPP_DEFAULT_COUNTRY_CODE. Configure a numeric country code.");
-  }
-  return value;
 }
 
 /**

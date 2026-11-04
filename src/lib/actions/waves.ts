@@ -279,8 +279,6 @@ export async function generateDoctorWavesAction(
                     arrivalEndTime: new Date(w.windowEnd).toISOString(),
                   },
                   dedupeKey: `email:arrival_window:${assigned.id}:${w.id}`,
-                  whatsappTemplate: "arrival_window",
-                  whatsappDedupeKey: `whatsapp:arrival_window:${assigned.id}:${w.id}`,
                 });
               }
             }
@@ -460,8 +458,6 @@ export async function publishDoctorWaveAction(input: PublishDoctorWaveInput) {
           arrivalEndTime: wave.windowEnd.toISOString(),
         },
         dedupeKey: `email:arrival_window:${appt.id}:${wave.id}`,
-        whatsappTemplate: "arrival_window",
-        whatsappDedupeKey: `whatsapp:arrival_window:${appt.id}:${wave.id}`,
       });
     }
 
