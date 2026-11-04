@@ -473,12 +473,10 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
         arrivalWindow: assignedWaveArrivalWindow,
       },
       dedupeKey: `email:booking_confirmed:${appointmentId}`,
-      whatsappTemplate: "appointment_confirmed",
-      whatsappDedupeKey: `whatsapp:appointment_confirmed:${appointmentId}`,
     });
     console.info("[Payment] Confirmation notifications enqueued.");
 
-    // Outbox email and WhatsApp receipt (if payment row exists and was paid)
+    // Outbox email receipt (if payment row exists and was paid)
     const paidPayment = appointment.payments[0];
     if (paidPayment) {
       console.info("[Payment] Enqueueing payment receipt notifications.");
@@ -495,8 +493,6 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
           paymentId: paidPayment.id,
         },
         dedupeKey: `email:payment_receipt:${paidPayment.id}`,
-        whatsappTemplate: "payment_receipt",
-        whatsappDedupeKey: `whatsapp:payment_receipt:${paidPayment.id}`,
       });
       console.info("[Payment] Payment receipt notifications enqueued.");
     }
@@ -986,8 +982,6 @@ export async function requestRefund(params: RequestRefundParams): Promise<Reques
           providerRefundId,
         },
         dedupeKey: `email:refund_status:${refundRecordId}:${finalStatus}`,
-        whatsappTemplate: "refund_update",
-        whatsappDedupeKey: `whatsapp:refund_update:${refundRecordId}:${finalStatus}`,
       });
     }
 

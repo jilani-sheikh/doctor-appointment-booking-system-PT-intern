@@ -326,8 +326,6 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
           arrivalWindow: appointment.assignedWaveArrivalWindow,
         },
         dedupeKey: `email:booking_confirmed:${appointment.appt.id}`,
-        whatsappTemplate: "appointment_confirmed",
-        whatsappDedupeKey: `whatsapp:appointment_confirmed:${appointment.appt.id}`,
       });
     } catch (notifError) {
       console.error("[bookAppointmentAction] Error sending post-commit notifications:", notifError);
@@ -517,8 +515,6 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
         refundInitiated: Boolean(refundSummary && !refundSummary.includes("not eligible")),
       },
       dedupeKey: `email:appointment_cancelled:${appointmentId}`,
-      whatsappTemplate: "appointment_cancelled",
-      whatsappDedupeKey: `whatsapp:appointment_cancelled:${appointmentId}`,
     });
 
     // Notify waitlist if slot became AVAILABLE

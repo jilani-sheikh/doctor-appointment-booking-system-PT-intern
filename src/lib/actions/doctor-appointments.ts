@@ -159,8 +159,6 @@ export async function updateDoctorAppointmentStatusAction(
           refundInitiated: Boolean(refundSummary),
         },
         dedupeKey: `email:doctor_cancelled:${appointmentId}`,
-        whatsappTemplate: "appointment_cancelled",
-        whatsappDedupeKey: `whatsapp:appointment_cancelled:${appointmentId}:doctor`,
       });
 
       // Notify waitlist if slot became available
