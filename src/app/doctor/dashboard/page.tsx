@@ -1,6 +1,7 @@
 import { Metadata } from "next";
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
+import { DeleteProfileDialog } from "@/components/auth/delete-profile-dialog";
 import { Role, DoctorStatus, AppointmentStatus, SlotStatus } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -302,6 +303,17 @@ export default async function DoctorDashboardPage() {
           </div>
         </Card>
       </div>
+      <Card className="border-destructive/30">
+        <CardHeader>
+          <CardTitle className="text-base text-destructive">Delete profile</CardTitle>
+          <CardDescription className="text-xs">
+            Upcoming appointments will be cancelled and eligible refunds initiated before deletion.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <DeleteProfileDialog email={user.email} />
+        </CardContent>
+      </Card>
     </div>
   );
 }

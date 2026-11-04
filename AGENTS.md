@@ -38,3 +38,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **Truthful Status Display:** Refund statuses (`REQUESTED`, `PENDING`, `SUCCESS`, `FAILED`) and email notifications must always be truthful and never labeled "Refunded" until provider status is `SUCCESS`.
 - **Outbox Email Deliveries:** Transactional emails are scheduled via `notification_deliveries` outbox table and dispatched by `/api/cron/tick` or immediate best-effort send.
 
+### Password reset and account deletion
+- Password reset tokens are stored only as SHA-256 hashes, expire after 30 minutes, are single-use, and invalidate older unused tokens. `passwordChangedAt` invalidates older JWT sessions.
+- Google-only users receive sign-in guidance rather than a reset token. Email verification is not implemented; Resend sandbox delivery is limited to the account owner's address until a domain is verified.
+- Patient and doctor deletion is role-scoped and blocker-checked. Financial-linked appointments/payments/refunds are retained as an anonymized ledger; operational records without money history are removed. Deletion uses `deletionRequestedAt` for retry visibility and sends final email best-effort.

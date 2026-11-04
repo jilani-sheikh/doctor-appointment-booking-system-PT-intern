@@ -571,7 +571,23 @@ Medrella's authenticated endpoint `/api/cron/tick` handles:
 There is deliberately no Vercel Cron configuration: Vercel Hobby does not support sub-daily cron schedules. Signed-in requests schedule this maintenance through Next.js `after()` and a database-backed 60-second gate. The root layout, patient payments pages, payment return page, doctor queue page, and booking action all provide opportunistic triggers. Several requests may race safely; only one maintenance run claims the database gate.
 Reminder timing depends on the application being used. If nobody opens the application, no opportunistic run occurs, so reminders are not guaranteed to be delivered at their exact offsets. Use the authenticated endpoint manually or an external scheduler if stronger timing guarantees are required.
 
-The repository includes [`vercel.json`](./vercel.json) to run this route every five minutes on Vercel. Configure the same `CRON_SECRET` environment variable in Vercel; Vercel Cron sends it as the `Authorization: Bearer <CRON_SECRET>` header. Each run processes the existing full cron workload, including due email deliveries, payment reconciliation, refund reconciliation, and stale-hold expiry.
 
 
 WhatsApp via Twilio was removed and is planned for later.
+
+### Password reset and profile deletion
+
+Credential password resets use a 32-byte random token whose SHA-256 hash is stored in
+`password_reset_tokens`; links expire after 30 minutes, are single-use, and invalidate
+previous unused links. Resetting a password updates `passwordChangedAt`, so older JWT
+sessions are treated as signed out. Google-only accounts receive guidance to use Google
+sign-in instead; this application does not provide email verification.
+
+Patients must first cancel current/upcoming appointments and finish pending refunds.
+Doctors cannot delete while checked-in or in-consultation today or while refunds are
+pending; upcoming confirmed appointments are cancelled through the normal refund and
+notification path. Deletion removes operational data without money history. Appointments
+with payment/refund records remain for accounting, while the user is anonymized as
+`Deleted user` with a `deleted+<id>@deleted.invalid` address and cleared credentials/profile
+fields. The deletion confirmation email is best-effort. Resend sandbox delivery is
+limited to the Resend account owner's address until a sender domain is verified.

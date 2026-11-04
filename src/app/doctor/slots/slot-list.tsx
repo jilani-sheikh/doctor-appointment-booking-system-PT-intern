@@ -88,7 +88,7 @@ export function SlotList({ slotsGrouped }: SlotListProps) {
                   return (
                     <div
                       key={slot.id}
-                      className={`p-3 rounded-lg border flex flex-col justify-between gap-2.5 transition-all ${
+                      className={`min-w-0 overflow-hidden p-3 rounded-lg border flex flex-col justify-between gap-2.5 transition-all ${
                         slot.status === "AVAILABLE"
                           ? "bg-card border-border hover:border-primary/40"
                           : slot.status === "BLOCKED"
@@ -96,8 +96,8 @@ export function SlotList({ slotsGrouped }: SlotListProps) {
                           : "bg-blue-50/50 dark:bg-blue-950/20 border-blue-500/30"
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-semibold tracking-tight whitespace-nowrap">
+                      <div className="min-w-0 flex flex-col items-start gap-2">
+                        <span className="max-w-full text-sm font-semibold tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">
                           {range}
                         </span>
                         {slot.status === "AVAILABLE" && (
@@ -118,7 +118,7 @@ export function SlotList({ slotsGrouped }: SlotListProps) {
                       </div>
 
                       {/* Actions */}
-                      <div className="flex items-center gap-1.5 pt-1 border-t border-border/50">
+                      <div className="w-full min-w-0 flex flex-wrap items-center gap-1.5 pt-1 border-t border-border/50">
                         {slot.status === "AVAILABLE" && (
                           <>
                             <Button
@@ -126,7 +126,7 @@ export function SlotList({ slotsGrouped }: SlotListProps) {
                               size="xs"
                               disabled={isPending}
                               onClick={() => handleToggleBlock(slot.id)}
-                              className="text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 flex-1 text-xs"
+                              className="min-w-0 flex-1 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 text-xs"
                             >
                               <Ban className="h-3 w-3 mr-1" />
                               Block
@@ -151,7 +151,7 @@ export function SlotList({ slotsGrouped }: SlotListProps) {
                               size="xs"
                               disabled={isPending}
                               onClick={() => handleToggleBlock(slot.id)}
-                              className="text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 flex-1 text-xs"
+                              className="min-w-0 flex-1 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 text-xs"
                             >
                               <CheckCircle2 className="h-3 w-3 mr-1" />
                               Unblock

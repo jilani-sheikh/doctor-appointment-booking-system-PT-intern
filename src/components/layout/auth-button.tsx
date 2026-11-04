@@ -4,6 +4,7 @@ import * as React from "react";
 import { useState, useRef, useEffect, useTransition } from "react";
 import Link from "next/link";
 import { signInAction, signOutAction } from "@/lib/actions/auth";
+import { DeleteProfileDialog } from "@/components/auth/delete-profile-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { LogIn, LogOut, LayoutDashboard, Shield, Stethoscope, User as UserIcon, Loader2 } from "lucide-react";
@@ -194,6 +195,10 @@ export function AuthButton({ user }: AuthButtonProps) {
           </Link>
 
           <div className="my-1 border-t border-border" />
+
+          {(user.role === "PATIENT" || user.role === "DOCTOR") && (
+            <DeleteProfileDialog email={user.email} />
+          )}
 
           {/* Sign Out Action inside Dropdown */}
           <form
