@@ -55,6 +55,8 @@ describe("Appointment Reminder Synchronization & Lifecycle", () => {
 
     assert.equal(res.scheduled, 2); // 1440m and 120m offsets are both in future
     assert.equal(mockDeliveries.length, 2);
+    assert.equal(mockDeliveries.filter((delivery) => delivery.channel === "EMAIL").length, 2);
+    assert.equal(mockDeliveries.some((delivery) => delivery.channel === "WHATSAPP"), false);
     assert.equal(mockDeliveries[0].status, DeliveryStatus.PENDING);
     assert.equal(mockDeliveries[1].status, DeliveryStatus.PENDING);
   });
