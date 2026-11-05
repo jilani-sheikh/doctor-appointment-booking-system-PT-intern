@@ -96,10 +96,12 @@ export function ScheduleForm() {
           <div><Label htmlFor="schedule-end">End date</Label><Input id="schedule-end" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} disabled={recurrence === "ONCE"} required /></div>
           <div><Label htmlFor="schedule-start-time">Start time</Label><Input id="schedule-start-time" type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} /></div>
           <div><Label htmlFor="schedule-end-time">End time</Label><Input id="schedule-end-time" type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} /></div>
-          <div><Label htmlFor="schedule-duration">Duration (minutes)</Label><Input id="schedule-duration" type="number" min={1} value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))} /></div>
+          {type === "WAVE" && (
+            <div><Label htmlFor="schedule-duration">Duration (minutes)</Label><Input id="schedule-duration" type="number" min={1} value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))} required /></div>
+          )}
           <div><Label htmlFor="schedule-capacity">Capacity</Label><Input id="schedule-capacity" type="number" min={1} value={capacity} onChange={(event) => setCapacity(Number(event.target.value))} /></div>
         </div>
-        {type === "STREAM" && <p className="text-xs text-muted-foreground">One Stream window; appointment intervals are calculated on the duration grid and capacity applies to the window.</p>}
+        {type === "STREAM" && <p className="text-xs text-muted-foreground">One Stream window; capacity applies to the complete window.</p>}
         <div className="flex gap-2">
           <Button type="button" variant="outline" disabled={isPending} onClick={handlePreview}>Preview</Button>
           <Button type="button" disabled={isPending || !preview} onClick={handleCreate}>Save schedule</Button>

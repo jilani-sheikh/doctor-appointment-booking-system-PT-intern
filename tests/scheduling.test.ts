@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   generateScheduleAvailabilities,
-  streamInterval,
   validateScheduleInput,
   effectiveSlot,
   generatedScheduleDates,
@@ -53,6 +52,25 @@ test("generates one stream window per date", () => {
   assert.equal(rows[0]?.kind, "STREAM_WINDOW");
 });
 
+test("generates all non-recurring Wave sub-slots for one date", () => {
+  const rows = generateScheduleAvailabilities(
+    {
+      type: "WAVE",
+      recurrence: "ONCE",
+      startDate: "2026-11-07",
+      endDate: "2026-11-07",
+      daysOfWeek: [],
+      startMinute: 600,
+      endMinute: 720,
+      durationMinutes: 30,
+      capacity: 3,
+    },
+    "2026-11-01"
+  );
+  assert.equal(rows.filter((row) => row.kind === "WAVE_PARENT").length, 1);
+  assert.equal(rows.filter((row) => row.kind === "WAVE_SLOT").length, 4);
+});
+
 test("recurring Stream schedules include every selected calendar date", () => {
   const rows = generateScheduleAvailabilities(
     {
@@ -71,11 +89,11 @@ test("recurring Stream schedules include every selected calendar date", () => {
   assert.deepEqual(rows.map((row) => row.date), ["2026-11-06", "2026-11-07", "2026-11-08"]);
 });
 
-test("rejects non-divisible windows and invalid stream capacity", () => {
+test("validates Wave duration but keeps Stream capacity independent", () => {
   assert.equal(
     validateScheduleInput(
       {
-        type: "STREAM",
+        type: "WAVE",
         recurrence: "ONCE",
         startDate: "2026-11-09",
         endDate: "2026-11-09",
@@ -100,33 +118,26 @@ test("rejects non-divisible windows and invalid stream capacity", () => {
         startMinute: 600,
         endMinute: 660,
         durationMinutes: 30,
-        capacity: 3,
+        capacity: 4,
       },
       "2026-11-01"
     ),
-    "Stream capacity cannot exceed the number of appointment intervals."
+    null
   );
 });
 
-test("validates stream interval grid", () => {
-  const windowStart = new Date("2026-11-09T04:30:00.000Z");
-  const windowEnd = new Date("2026-11-09T06:30:00.000Z");
-  assert.ok(streamInterval(windowStart, windowEnd, 30, new Date("2026-11-09T05:00:00.000Z")));
-  assert.equal(streamInterval(windowStart, windowEnd, 30, new Date("2026-11-09T04:45:00.000Z")), null);
-});
-
-test("effective stream appointment range is used for queue estimates", () => {
+test("effective stream appointment range uses the complete window", () => {
   const appointment = {
-    slotStart: new Date("2026-11-09T05:30:00.000Z"),
-    slotEnd: new Date("2026-11-09T06:00:00.000Z"),
+    slotStart: null,
+    slotEnd: null,
     availability: {
       startTime: new Date("2026-11-09T04:30:00.000Z"),
       endTime: new Date("2026-11-09T06:30:00.000Z"),
     },
   };
   const slot = effectiveSlot(appointment);
-  assert.equal(slot.start.toISOString(), "2026-11-09T05:30:00.000Z");
-  assert.equal(slot.end.toISOString(), "2026-11-09T06:00:00.000Z");
+  assert.equal(slot.start.toISOString(), "2026-11-09T04:30:00.000Z");
+  assert.equal(slot.end.toISOString(), "2026-11-09T06:30:00.000Z");
   const estimates = calculateQueueEstimates([
     {
       id: "stream-appointment",

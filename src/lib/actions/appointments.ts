@@ -105,18 +105,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
   }
 
   if (slot.kind === "STREAM_WINDOW") {
-    if (!intervalStart) return { success: false, error: "Please choose an appointment interval." };
-    const interval = new Date(intervalStart);
-    const durationMs = (slot.schedule?.durationMinutes ?? 30) * 60_000;
-    const offset = interval.getTime() - slot.startTime.getTime();
-    if (
-      Number.isNaN(interval.getTime()) ||
-      offset < 0 ||
-      offset % durationMs !== 0 ||
-      interval.getTime() + durationMs > slot.endTime.getTime()
-    ) {
-      return { success: false, error: "The selected appointment interval is invalid." };
-    }
+    if (intervalStart) return { success: false, error: "Stream windows are booked as one complete availability window." };
   } else if (intervalStart) {
     return { success: false, error: "This slot does not accept an appointment interval." };
   }
@@ -291,8 +280,8 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
             stream: stream as VisitStream,
             status: AppointmentStatus.CONFIRMED,
             waveId: waveIdToAssign,
-            slotStart: intervalStart ? new Date(intervalStart) : undefined,
-            slotEnd: intervalStart
+            slotStart: slot.kind !== "STREAM_WINDOW" && intervalStart ? new Date(intervalStart) : undefined,
+            slotEnd: slot.kind !== "STREAM_WINDOW" && intervalStart
               ? new Date(new Date(intervalStart).getTime() + (slot.schedule?.durationMinutes ?? 30) * 60_000)
               : undefined,
           },

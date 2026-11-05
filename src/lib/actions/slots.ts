@@ -717,8 +717,7 @@ export async function createScheduleAction(input: ScheduleInput, confirmOverride
         });
       }
       const parents = new Map<number, string>();
-      for (let index = 0; index < rowsToCreate.length; index += 1) {
-        const row = rowsToCreate[index];
+      for (const row of rowsToCreate) {
         const created = await tx.availability.create({
           data: {
             doctorId: user.doctor!.id,
@@ -730,7 +729,8 @@ export async function createScheduleAction(input: ScheduleInput, confirmOverride
             parentId: row.parentIndex === undefined ? undefined : parents.get(row.parentIndex),
           },
         });
-        if (row.kind === "WAVE_PARENT") parents.set(index, created.id);
+        const rowIndex = rows.indexOf(row);
+        if (row.kind === "WAVE_PARENT") parents.set(rowIndex, created.id);
       }
       return { schedule, overrideAppointments: activeOverrideAppointments };
     }, { maxWait: 10000, timeout: 20000 });

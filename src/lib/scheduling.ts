@@ -111,17 +111,16 @@ export function validateScheduleInput(input: ScheduleInput, todayDate: string): 
   if (input.startMinute < 0 || input.endMinute > 1440 || input.endMinute <= input.startMinute) {
     return "End time must be after start time.";
   }
-  if (input.durationMinutes <= 0 || !Number.isInteger(input.durationMinutes)) {
-    return "Duration must be a positive whole number of minutes.";
-  }
   const windowMinutes = input.endMinute - input.startMinute;
-  if (windowMinutes % input.durationMinutes !== 0) {
-    return "The schedule window must be divisible by the duration.";
+  if (input.type === "WAVE") {
+    if (input.durationMinutes <= 0 || !Number.isInteger(input.durationMinutes)) {
+      return "Duration must be a positive whole number of minutes.";
+    }
+    if (windowMinutes % input.durationMinutes !== 0) {
+      return "The schedule window must be divisible by the duration.";
+    }
   }
   if (input.capacity <= 0 || !Number.isInteger(input.capacity)) return "Capacity must be a positive whole number.";
-  if (input.type === "STREAM" && input.capacity > windowMinutes / input.durationMinutes) {
-    return "Stream capacity cannot exceed the number of appointment intervals.";
-  }
   return null;
 }
 
@@ -141,7 +140,6 @@ export function generateScheduleAvailabilities(
   }
 
   const rows: GeneratedAvailability[] = [];
-  const intervalCount = (input.endMinute - input.startMinute) / input.durationMinutes;
   for (const date of dates) {
     const windowStart = parseISTDateTime(
       date,
@@ -157,6 +155,7 @@ export function generateScheduleAvailabilities(
       continue;
     }
 
+    const intervalCount = (input.endMinute - input.startMinute) / input.durationMinutes;
     const parentIndex = rows.length;
     rows.push({ date, kind: "WAVE_PARENT", startTime: windowStart, endTime: windowEnd, capacity: input.capacity });
     for (let index = 0; index < intervalCount; index += 1) {
@@ -179,20 +178,6 @@ export function generateScheduleAvailabilities(
     }
   }
   return rows;
-}
-
-export function streamInterval(
-  windowStart: Date,
-  windowEnd: Date,
-  durationMinutes: number,
-  intervalStart: Date
-): { start: Date; end: Date } | null {
-  const durationMs = durationMinutes * 60_000;
-  const offset = intervalStart.getTime() - windowStart.getTime();
-  if (offset < 0 || intervalStart.getTime() + durationMs > windowEnd.getTime() || offset % durationMs !== 0) {
-    return null;
-  }
-  return { start: intervalStart, end: new Date(intervalStart.getTime() + durationMs) };
 }
 
 export function effectiveSlot(appointment: {

@@ -658,6 +658,7 @@ export interface SerializedSlot {
   startTime: string;
   endTime: string;
   status: SlotStatus;
+  capacity: number;
 }
 
 export function toSlotDto(slot: {
@@ -665,12 +666,14 @@ export function toSlotDto(slot: {
   startTime: Date;
   endTime: Date;
   status: SlotStatus;
+  capacity: number;
 }): SerializedSlot {
   return {
     id: slot.id,
     startTime: slot.startTime.toISOString(),
     endTime: slot.endTime.toISOString(),
     status: slot.status,
+    capacity: slot.capacity,
   };
 }
 

@@ -303,35 +303,6 @@ export function DoctorBookingSlots({
                   {daySlots.map((slot) => {
                     const range = formatSlotRange(slot.startTime, slot.endTime);
                     const seatsLeft = Math.max(0, slot.capacity - slot.activeCount);
-                    if (slot.kind === "STREAM_WINDOW" && slot.durationMinutes) {
-                      const intervals: Array<{ start: Date; end: Date }> = [];
-                      const durationMs = slot.durationMinutes * 60_000;
-                      for (let start = new Date(slot.startTime).getTime(); start + durationMs <= new Date(slot.endTime).getTime(); start += durationMs) {
-                        intervals.push({ start: new Date(start), end: new Date(start + durationMs) });
-                      }
-                      return (
-                        <div key={slot.id} className="col-span-full rounded-lg border border-border/80 p-3 space-y-2">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-semibold">{range}</span>
-                            <span className="text-muted-foreground">{seatsLeft} of {slot.capacity} seats left</span>
-                          </div>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                            {intervals.map((interval) => (
-                              <button
-                                key={interval.start.toISOString()}
-                                type="button"
-                                aria-label={`Book ${formatSlotRange(interval.start, interval.end).replace(" - ", " to ")} on ${dateLabel}`}
-                                onClick={() => handleSlotClick(dateLabel, slot, interval.start.toISOString())}
-                                disabled={isPending || seatsLeft === 0}
-                                className="rounded border border-border px-2 py-2 text-xs hover:border-primary disabled:opacity-50"
-                              >
-                                {formatSlotRange(interval.start, interval.end)}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    }
                     const ariaLabel = `Book ${range.replace(" - ", " to ")} on ${dateLabel}, ${seatsLeft} seats left`;
                     return (
                       <button key={slot.id} type="button" aria-label={ariaLabel} onClick={() => handleSlotClick(dateLabel, slot)} disabled={isPending || seatsLeft === 0} className="min-w-0 flex flex-col items-center justify-center py-2.5 px-3 rounded-lg border border-border/80 bg-card hover:bg-primary/5 hover:border-primary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 transition-all text-xs font-medium text-foreground cursor-pointer group shadow-2xs hover:shadow-xs disabled:opacity-50 disabled:cursor-not-allowed">

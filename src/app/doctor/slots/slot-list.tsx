@@ -136,6 +136,9 @@ export function SlotList({ slotsGrouped }: SlotListProps) {
                         <span className="max-w-full text-sm font-semibold tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">
                           {range}
                         </span>
+                        <span className="text-xs text-muted-foreground">
+                          Capacity: {slot.capacity}
+                        </span>
                         {slot.status === "AVAILABLE" && (
                           <Badge variant="success" className="text-[10px] uppercase">
                             Available

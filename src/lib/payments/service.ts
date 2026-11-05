@@ -123,8 +123,8 @@ export async function bookWithPaymentHold(input: BookWithPaymentInput): Promise<
             stream: stream as VisitStream,
             status: AppointmentStatus.PENDING_PAYMENT,
             holdExpiresAt,
-            slotStart: intervalStart ? new Date(intervalStart) : undefined,
-            slotEnd: intervalStart
+            slotStart: slot.kind !== "STREAM_WINDOW" && intervalStart ? new Date(intervalStart) : undefined,
+            slotEnd: slot.kind !== "STREAM_WINDOW" && intervalStart
               ? new Date(new Date(intervalStart).getTime() + (slot.schedule?.durationMinutes ?? 30) * 60_000)
               : undefined,
           },
