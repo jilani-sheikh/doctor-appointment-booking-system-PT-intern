@@ -90,6 +90,9 @@ export default async function DoctorsPage({ searchParams }: DoctorsPageProps) {
           id: true;
           startTime: true;
           endTime: true;
+          capacity: true;
+          activeCount: true;
+          kind: true;
         };
       };
     };
@@ -117,6 +120,7 @@ export default async function DoctorsPage({ searchParams }: DoctorsPageProps) {
             where: {
               startTime: { gte: now },
               status: SlotStatus.AVAILABLE,
+              kind: { not: "WAVE_PARENT" },
             },
             orderBy: {
               startTime: "asc",
@@ -126,6 +130,9 @@ export default async function DoctorsPage({ searchParams }: DoctorsPageProps) {
               id: true,
               startTime: true,
               endTime: true,
+              capacity: true,
+              activeCount: true,
+              kind: true,
             },
           },
         },

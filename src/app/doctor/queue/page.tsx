@@ -4,6 +4,7 @@ import { requireRole } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { Role, DoctorStatus, AppointmentStatus } from "@/generated/prisma/client";
 import { getTodayISTDateString, getISTDateString } from "@/lib/time";
+import { effectiveSlot } from "@/lib/scheduling";
 import { calculateQueueEstimates, calculateQueueSummary, type QueueAppointmentItem } from "@/lib/queue";
 import { toDoctorQueueItemDto, type SerializedDoctorQueueItem } from "@/lib/serializers";
 import { DoctorQueueView } from "./doctor-queue-view";
@@ -63,14 +64,14 @@ export default async function DoctorQueuePage() {
 
   // Filter for today IST
   const todayAppts = rawAppointments.filter(
-    (a) => getISTDateString(a.availability.startTime) === todayISTStr
+    (a) => getISTDateString(effectiveSlot(a).start) === todayISTStr
   );
 
   const queueItemsInput: QueueAppointmentItem[] = todayAppts.map((a) => ({
     id: a.id,
     status: a.status,
-    scheduledStart: a.availability.startTime,
-    scheduledEnd: a.availability.endTime,
+    scheduledStart: effectiveSlot(a).start,
+    scheduledEnd: effectiveSlot(a).end,
     actualStartAt: a.actualStartAt,
     actualEndAt: a.actualEndAt,
     checkedInAt: a.checkedInAt,

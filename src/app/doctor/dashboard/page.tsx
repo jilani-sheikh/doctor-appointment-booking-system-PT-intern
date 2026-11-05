@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { buttonVariants } from "@/components/ui/button";
 import { AlertCircle, CheckCircle2, Clock, Calendar, Stethoscope, Briefcase, Users, ArrowRight, Activity } from "lucide-react";
 import { getTodayISTDateString, getISTDateString } from "@/lib/time";
+import { effectiveSlot } from "@/lib/scheduling";
 
 export const metadata: Metadata = {
   title: "Doctor Dashboard — Medrella",
@@ -41,6 +42,7 @@ export default async function DoctorDashboardPage() {
           availability: {
             select: {
               startTime: true,
+              endTime: true,
             },
           },
         },
@@ -57,7 +59,7 @@ export default async function DoctorDashboardPage() {
     openSlotsCount = availableSlots;
 
     for (const appt of allDoctorAppts) {
-      const slotDateIST = getISTDateString(appt.availability.startTime);
+      const slotDateIST = getISTDateString(effectiveSlot(appt).start);
       if (
         slotDateIST === todayIST &&
         appt.status !== AppointmentStatus.CANCELLED &&
@@ -67,7 +69,7 @@ export default async function DoctorDashboardPage() {
       }
 
       if (
-        appt.availability.startTime >= now &&
+        effectiveSlot(appt).start >= now &&
         (appt.status === AppointmentStatus.PENDING ||
           appt.status === AppointmentStatus.CONFIRMED ||
           appt.status === AppointmentStatus.CHECKED_IN ||

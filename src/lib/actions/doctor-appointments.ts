@@ -20,6 +20,7 @@ import { syncAppointmentReminders } from "@/lib/notifications/reminders";
 import { requestRefund } from "@/lib/payments/service";
 import { formatSlotDateTimeRangeIST } from "@/lib/time";
 import { revalidatePath } from "next/cache";
+import { effectiveSlot } from "@/lib/scheduling";
 
 /**
  * Transitions appointment status for doctor workflows.
@@ -64,6 +65,7 @@ export async function updateDoctorAppointmentStatusAction(
 
   const now = new Date();
   const current = appointment.status;
+  const appointmentSlot = effectiveSlot(appointment);
 
   // Validate state machine transition
   if (!isValidTransition(current, targetStatus, Role.DOCTOR)) {
@@ -76,7 +78,7 @@ export async function updateDoctorAppointmentStatusAction(
   // Timing check for No-Show
   if (targetStatus === "NO_SHOW") {
     const noShowEval = canDoctorNoShow(
-      { status: current, startTime: appointment.availability.startTime },
+      { status: current, startTime: appointmentSlot.start },
       now
     );
     if (!noShowEval.allowed) {
@@ -86,7 +88,7 @@ export async function updateDoctorAppointmentStatusAction(
 
   try {
     let newlyFreedSlot = false;
-    let freedSlotStartTime: Date = appointment.availability.startTime;
+    let freedSlotStartTime: Date = appointmentSlot.start;
     let refundSummary: string | null = null;
 
     if (targetStatus === "CANCELLED") {
@@ -111,7 +113,7 @@ export async function updateDoctorAppointmentStatusAction(
           await syncAppointmentReminders(tx, {
             appointmentId,
             userId: appointment.patient.userId,
-            slotStartTime: appointment.availability.startTime,
+            slotStartTime: appointmentSlot.start,
             status: AppointmentStatus.CANCELLED,
           });
         },
@@ -134,7 +136,7 @@ export async function updateDoctorAppointmentStatusAction(
       }
 
       // Notify patient of doctor cancellation
-      const slotTimeFormatted = `${formatSlotDateTimeRangeIST(appointment.availability.startTime, appointment.availability.endTime)} IST`;
+      const slotTimeFormatted = `${formatSlotDateTimeRangeIST(appointmentSlot.start, appointmentSlot.end)} IST`;
       await createNotification({
         userId: appointment.patient.userId,
         type: NotificationType.APPOINTMENT_CANCELLED,
@@ -152,8 +154,8 @@ export async function updateDoctorAppointmentStatusAction(
         template: "appointment_cancelled",
         payload: {
           doctorName: user.name || "Doctor",
-          startTime: appointment.availability.startTime.toISOString(),
-          endTime: appointment.availability.endTime.toISOString(),
+          startTime: appointmentSlot.start.toISOString(),
+          endTime: appointmentSlot.end.toISOString(),
           cancelledBy: "DOCTOR",
           refundSummary,
           refundInitiated: Boolean(refundSummary),
@@ -178,7 +180,7 @@ export async function updateDoctorAppointmentStatusAction(
         await syncAppointmentReminders(tx, {
           appointmentId,
           userId: appointment.patient.userId,
-          slotStartTime: appointment.availability.startTime,
+          slotStartTime: appointmentSlot.start,
           status: AppointmentStatus.COMPLETED,
         });
       });
@@ -194,7 +196,7 @@ export async function updateDoctorAppointmentStatusAction(
         await syncAppointmentReminders(tx, {
           appointmentId,
           userId: appointment.patient.userId,
-          slotStartTime: appointment.availability.startTime,
+          slotStartTime: appointmentSlot.start,
           status: AppointmentStatus.NO_SHOW,
         });
       });

@@ -48,6 +48,7 @@ export function DoctorBookingSlots({
 }: DoctorBookingSlotsProps) {
   const router = useRouter();
   const [selectedSlot, setSelectedSlot] = useState<SerializedPublicSlot | null>(null);
+  const [selectedIntervalStart, setSelectedIntervalStart] = useState<string | undefined>();
   const [slotDateLabel, setSlotDateLabel] = useState<string>("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [stream, setStream] = useState<"NEW_CONSULTATION" | "FOLLOW_UP">("NEW_CONSULTATION");
@@ -59,7 +60,7 @@ export function DoctorBookingSlots({
   const [waitlistStart, setWaitlistStart] = useState("");
   const [waitlistEnd, setWaitlistEnd] = useState("");
 
-  const handleSlotClick = (dateLabel: string, slot: SerializedPublicSlot) => {
+  const handleSlotClick = (dateLabel: string, slot: SerializedPublicSlot, intervalStart?: string) => {
     if (!isAuthenticated) {
       router.push(`/sign-in?callbackUrl=/doctors/${doctorId}`);
       return;
@@ -73,6 +74,7 @@ export function DoctorBookingSlots({
     }
 
     setSelectedSlot(slot);
+    setSelectedIntervalStart(intervalStart);
     setSlotDateLabel(dateLabel);
     setStream("NEW_CONSULTATION");
     setReason("");
@@ -85,6 +87,7 @@ export function DoctorBookingSlots({
     startTransition(async () => {
       const res = await bookAppointmentAction({
         availabilityId: selectedSlot.id,
+        intervalStart: selectedIntervalStart,
         stream,
         reason: reason.trim() || undefined,
       });
@@ -299,20 +302,12 @@ export function DoctorBookingSlots({
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                   {daySlots.map((slot) => {
                     const range = formatSlotRange(slot.startTime, slot.endTime);
-                    const ariaLabel = `Book ${range.replace(" - ", " to ")} on ${dateLabel}`;
-
+                    const seatsLeft = Math.max(0, slot.capacity - slot.activeCount);
+                    const ariaLabel = `Book ${range.replace(" - ", " to ")} on ${dateLabel}, ${seatsLeft} seats left`;
                     return (
-                      <button
-                        key={slot.id}
-                        type="button"
-                        aria-label={ariaLabel}
-                        onClick={() => handleSlotClick(dateLabel, slot)}
-                        disabled={isPending}
-                        className="min-w-0 flex items-center justify-center py-2.5 px-3 rounded-lg border border-border/80 bg-card hover:bg-primary/5 hover:border-primary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 transition-all text-xs font-medium text-foreground cursor-pointer group shadow-2xs hover:shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <span className="group-hover:text-primary font-semibold whitespace-nowrap">
-                          {range}
-                        </span>
+                      <button key={slot.id} type="button" aria-label={ariaLabel} onClick={() => handleSlotClick(dateLabel, slot)} disabled={isPending || seatsLeft === 0} className="min-w-0 flex flex-col items-center justify-center py-2.5 px-3 rounded-lg border border-border/80 bg-card hover:bg-primary/5 hover:border-primary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 transition-all text-xs font-medium text-foreground cursor-pointer group shadow-2xs hover:shadow-xs disabled:opacity-50 disabled:cursor-not-allowed">
+                        <span className="group-hover:text-primary font-semibold whitespace-nowrap">{range}</span>
+                        <span className="text-[10px] text-muted-foreground">{seatsLeft} of {slot.capacity} seats left</span>
                       </button>
                     );
                   })}

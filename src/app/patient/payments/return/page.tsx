@@ -8,6 +8,7 @@ import { buttonVariants } from "@/components/ui/button";
 import type { GetOrderResult } from "@/lib/payments/types";
 import { CheckCircle2, AlertTriangle, Clock, XCircle, ArrowRight } from "lucide-react";
 import { formatSlotDateTimeRangeIST } from "@/lib/time";
+import { effectiveSlot } from "@/lib/scheduling";
 import { formatINR } from "@/lib/money";
 import { PendingRefresh } from "./pending-refresh";
 import { scheduleOpportunisticMaintenance } from "@/lib/maintenance";
@@ -101,7 +102,8 @@ export default async function PaymentReturnPage({ searchParams }: ReturnPageProp
   }
 
   const doctorName = payment.appointment.availability.doctor.user.name || "Practitioner";
-  const slotTime = `${formatSlotDateTimeRangeIST(payment.appointment.availability.startTime, payment.appointment.availability.endTime)} IST`;
+  const appointmentSlot = effectiveSlot(payment.appointment);
+  const slotTime = `${formatSlotDateTimeRangeIST(appointmentSlot.start, appointmentSlot.end)} IST`;
   const amount = Number(payment.amount);
 
   // 3. Render Status Views

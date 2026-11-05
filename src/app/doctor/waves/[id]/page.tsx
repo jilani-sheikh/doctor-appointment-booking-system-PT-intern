@@ -7,9 +7,10 @@ import { toWaveDto } from "@/lib/serializers";
 import { calculateWaveMetrics } from "@/lib/waves";
 import { getISTDateString, getISTDayRangeUTC } from "@/lib/time";
 import { DoctorWaveDetailView } from "./doctor-wave-detail-view";
+import { effectiveSlot } from "@/lib/scheduling";
 
 export const metadata: Metadata = {
-  title: "Wave Details — Medrella",
+  title: "Arrival Window Details — Medrella",
   description: "View and manage wave arrival window and patient assignments.",
 };
 
@@ -106,8 +107,8 @@ export default async function DoctorWaveDetailPage({ params }: DoctorWaveDetailP
     patientGender: a.patient.gender,
     status: a.status,
     stream: a.stream,
-    slotStartTime: a.availability.startTime.toISOString(),
-    slotEndTime: a.availability.endTime.toISOString(),
+    slotStartTime: effectiveSlot(a).start.toISOString(),
+    slotEndTime: effectiveSlot(a).end.toISOString(),
     checkedInAt: a.checkedInAt ? a.checkedInAt.toISOString() : null,
   }));
 

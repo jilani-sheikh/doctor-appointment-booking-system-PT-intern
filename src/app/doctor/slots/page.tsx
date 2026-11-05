@@ -3,11 +3,13 @@ import { Role, DoctorStatus } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { formatDateIST } from "@/lib/time";
 import { SlotGeneratorForm } from "./slot-form";
+import { ScheduleForm } from "./schedule-form";
 import { SlotList } from "./slot-list";
 import { toSlotDto, type SerializedSlot } from "@/lib/serializers";
 import { Clock, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
+import { ScheduleList } from "./schedule-list";
 
 export default async function DoctorSlotsPage() {
   const user = await requireRole(Role.DOCTOR);
@@ -51,10 +53,16 @@ export default async function DoctorSlotsPage() {
     where: {
       doctorId: doctor.id,
       startTime: { gte: now },
+      kind: { not: "WAVE_PARENT" },
     },
     orderBy: {
       startTime: "asc",
     },
+  });
+  const schedules = await db.availabilitySchedule.findMany({
+    where: { doctorId: doctor.id, status: "ACTIVE" },
+    include: { exceptions: { select: { date: true, reason: true } } },
+    orderBy: { createdAt: "desc" },
   });
 
   // Group slots by formatted date string in IST
@@ -89,6 +97,16 @@ export default async function DoctorSlotsPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         <div className="lg:col-span-5">
+          <ScheduleForm />
+          <ScheduleList schedules={schedules.map((schedule) => ({
+            id: schedule.id,
+            type: schedule.type,
+            recurrence: schedule.recurrence,
+            startDate: schedule.startDate,
+            endDate: schedule.endDate,
+            capacity: schedule.capacity,
+            exceptions: schedule.exceptions.map((exception) => ({ date: exception.date, reason: exception.reason })),
+          }))} />
           <SlotGeneratorForm />
         </div>
         <div className="lg:col-span-7">

@@ -2,6 +2,20 @@
 
 Medrella is a full-stack doctor appointment scheduling web application connecting patients with healthcare professionals, managing doctor availability, and facilitating conflict-free consultation bookings.
 
+## Wave and Stream scheduling
+
+The scheduling model supports recurring or **Non-recurring** **Wave** schedules and **Stream** windows. Wave schedules create a non-bookable parent plus duration-sized sub-slots; each sub-slot has its own seat capacity. Stream schedules create one window and calculate appointment intervals on the duration grid. Windows must be divisible by the duration, overlapping active availability is rejected, and all date calculations use IST before UTC storage. A Non-recurring schedule overrides a matching Recurring date only; other recurring dates remain unchanged.
+
+Booking claims a seat with an atomic counter update. Payment holds count as occupied seats, and every cancellation, expiry, failed payment, or reschedule releases a seat through `releaseSlot`. A arrival window sub-slot may contain several patients; queue estimates therefore use the assumption that each patient's consultation takes `max(5 minutes, duration / capacity)`.
+
+Apply the scheduling migrations offline and in order immediately before deploying the matching application code:
+
+```text
+npx prisma migrate deploy
+```
+
+The first migration is additive and backfills `active_count`; the second creates capacity-safe partial indexes and checks, then deliberately drops the legacy single-seat `appointments_availability_id_active_unique` and `availabilities_doctor_id_start_time_key` indexes. Do not run these commands against the shared production database until they have been reviewed and tested on a disposable database.
+
 Developed as part of the PearlThoughts internship programme.
 
 ---
@@ -244,9 +258,9 @@ npm run build
 - [x] **Phase 2: User Profiles & Roles** (Patients, Doctors, Admin).
 - [x] **Phase 3: Doctor Availability Module** (Slots & calendar scheduling, bulk generator).
 - [x] **Phase 4: Appointment Booking & Lifecycle Management** (Double-booking prevention, partial unique index).
-- [x] **Phase 5: Live Queue, Waves, Streams, Dynamic Scheduling & Notifications**
+- [x] **Phase 5: Live Queue, Arrival Windows, Streams, Dynamic Scheduling & Notifications**
   - [x] Live Doctor Queue & Patient Turn Estimates.
-  - [x] Wave-based Arrival Management & Overflow Balancing.
+  - [x] Arrival Window-based Arrival Management & Overflow Balancing.
   - [x] Clinical Visit Streams (`NEW_CONSULTATION`, `FOLLOW_UP`, `PRIORITY`).
   - [x] Dynamic Scheduling: Self-Service Rescheduling (max 2) & Automated Waitlist.
   - [x] Doctor Absence Management with Precision Slot Restoration (`blockedByTimeOffId`).
@@ -331,18 +345,18 @@ The queue estimation engine (`src/lib/queue.ts`) calculates approximate start an
 
 ---
 
-## 🌊 Doctor-Owned Automatic Wave Scheduling (Arrival Windows over Fixed Slots)
+## 🌊 Doctor-Owned Automatic Arrival Window Scheduling (Arrival Windows over Fixed Slots)
 
-Medrella prevents clinic lobby congestion and patient waiting room anxiety through doctor-owned arrival wave scheduling (`src/lib/waves.ts`):
+Medrella prevents clinic lobby congestion and patient waiting room anxiety through doctor-owned arrival arrival window scheduling (`src/lib/arrival windows.ts`):
 
-- **Core Product Invariant:** Consultation slots decide **when the doctor sees** each patient (fixed length, one patient each). **Nothing about waves changes slot times or consultation order.** Waves only decide **when the patient should arrive**.
-- **Live Queue Separation:** The doctor calls a patient only in the Live Queue (`Start Consultation`). Waves never start or reorder consultations.
-- **Admin Boundary:** The Admin portal is strictly doctor validation/approval and platform oversight. No wave management features exist for admins.
+- **Core Product Invariant:** Consultation slots decide **when the doctor sees** each patient (fixed length, one patient each). **Nothing about arrival windows changes slot times or consultation order.** Arrival Windows only decide **when the patient should arrive**.
+- **Live Queue Separation:** The doctor calls a patient only in the Live Queue (`Start Consultation`). Arrival Windows never start or reorder consultations.
+- **Admin Boundary:** The Admin portal is strictly doctor validation/approval and platform oversight. No arrival window management features exist for admins.
 - **Doctor Preferences:** The doctor sets three defaults once:
-  1. `waveWindowMinutes` (default: 30 min): consultation chunking window.
-  2. `waveCapacity` (default: 2–3 patients): maximum patients per arrival wave.
-  3. `arrivalBufferMinutes` (default: 15 min): arrival buffer before the first consultation slot in the wave.
-  4. `autoPublishWaves` (default: false): whether generated waves are published immediately or kept as drafts.
+  1. `arrival windowWindowMinutes` (default: 30 min): consultation chunking window.
+  2. `arrival windowCapacity` (default: 2–3 patients): maximum patients per arrival arrival window.
+  3. `arrivalBufferMinutes` (default: 15 min): arrival buffer before the first consultation slot in the arrival window.
+  4. `autoPublishArrival Windows` (default: false): whether generated arrival windows are published immediately or kept as drafts.
 
 ### 📐 Realistic Worked Example (15-Minute Slots)
 
@@ -357,32 +371,32 @@ Consider a doctor with 15-minute consultation slots on a morning schedule:
 1. **Chunk 1:** Covers `[10:00, 10:30)`. Captures Patient 1 (10:00) and Patient 2 (10:15). Chunk size = 2 (meets capacity 2).
    - First slot in group: `10:00 AM`.
    - Arrival Window: `10:00 - 15 min = 09:45 AM` to `10:00 AM`.
-   - **Wave 1 Arrival Window:** `09:45 AM - 10:00 AM (IST)`.
+   - **Arrival Window 1 Arrival Window:** `09:45 AM - 10:00 AM (IST)`.
    - Patients assigned: Patient 1 & Patient 2.
 2. **Chunk 2:** Covers `[10:30, 11:00)`. Captures Patient 3 (10:30). Chunk size = 1 (within capacity 2).
    - First slot in group: `10:30 AM`.
    - Arrival Window: `10:30 - 15 min = 10:15 AM` to `10:30 AM`.
-   - **Wave 2 Arrival Window:** `10:15 AM - 10:30 AM (IST)`.
+   - **Arrival Window 2 Arrival Window:** `10:15 AM - 10:30 AM (IST)`.
    - Patients assigned: Patient 3.
 
 > **Key Invariant:** Consultation slots remain strictly **10:00 AM, 10:15 AM, and 10:30 AM**. Only the patient's requested arrival window is communicated (`"Arrive between 09:45 AM and 10:00 AM (IST). Your consultation slot is 10:00 AM."`).
 
 ### 🛡️ System Invariants & Rules
 
-1. **Overlap Validation Rule:** Overlap validation applies to **MANUAL** wave creation only (preventing doctors from scheduling contradictory manual arrival windows). **Generated waves may legitimately overlap** when the arrival buffer exceeds the gap between groups' first slots and are never rejected or altered.
-2. **Draft Visibility Invariant:** Patient appointment cards, notifications, and queue badges show an arrival window **ONLY** when `wave.status = PUBLISHED`. `DRAFT` waves are strictly invisible to patients. Re-generating waves deletes existing `DRAFT` waves (setting appointments' `waveId = null`), and `PUBLISHED` waves are permanent and never deleted or altered.
+1. **Overlap Validation Rule:** Overlap validation applies to **MANUAL** arrival window creation only (preventing doctors from scheduling contradictory manual arrival windows). **Generated arrival windows may legitimately overlap** when the arrival buffer exceeds the gap between groups' first slots and are never rejected or altered.
+2. **Draft Visibility Invariant:** Patient appointment cards, notifications, and queue badges show an arrival window **ONLY** when `arrival window.status = PUBLISHED`. `DRAFT` arrival windows are strictly invisible to patients. Re-generating arrival windows deletes existing `DRAFT` arrival windows (setting appointments' `arrival windowId = null`), and `PUBLISHED` arrival windows are permanent and never deleted or altered.
 3. **Past-Window Clamping & Expired Arrival Rule:**
    - If `arrivalStart < now`, the window start is clamped to `now`.
    - If the arrival window has already passed (`arrivalEnd <= now`):
-     - Already `CHECKED_IN` (or `IN_CONSULTATION`/`COMPLETED`) patients are **NOT unassigned**: they remain in their wave and count as arrived.
+     - Already `CHECKED_IN` (or `IN_CONSULTATION`/`COMPLETED`) patients are **NOT unassigned**: they remain in their arrival window and count as arrived.
      - Only `CONFIRMED` (not yet arrived) patients whose window has passed go to "unassigned" with the specific reason `"Arrival window expired"`.
-4. **Race-Safe Concurrency & Idempotency:** Wave generation locks the doctor row (`SELECT id FROM doctors WHERE id = $1 FOR UPDATE`) inside a short transaction (`{ maxWait: 10000, timeout: 20000 }`), guaranteeing that concurrent clicks produce no duplicate draft waves and leave published waves untouched.
-5. **Deduplicated In-App Notifications:** When published, patients receive a `WAVE_PUBLISHED` notification. If an appointment is moved to another wave, a notification is sent for the new window only. Notifications are deduplicated by target wave ID/href.
+4. **Race-Safe Concurrency & Idempotency:** Arrival Window generation locks the doctor row (`SELECT id FROM doctors WHERE id = $1 FOR UPDATE`) inside a short transaction (`{ maxWait: 10000, timeout: 20000 }`), guaranteeing that concurrent clicks produce no duplicate draft arrival windows and leave published arrival windows untouched.
+5. **Deduplicated In-App Notifications:** When published, patients receive a `WAVE_PUBLISHED` notification. If an appointment is moved to another arrival window, a notification is sent for the new window only. Notifications are deduplicated by target arrival window ID/href.
 
 ### ⚠️ System Limitations
 
-- **Trigger Model:** Waves are generated on-demand when the doctor clicks **Generate Drafts** or **Generate & Publish** in `/doctor/waves`. Nothing runs on a background cron or automatic schedule.
-- **Single-Doctor Scope:** Waves are strictly doctor-owned. There is no cross-doctor wave pooling or multi-practitioner coordination.
+- **Trigger Model:** Arrival Windows are generated on-demand when the doctor clicks **Generate Arrival Window Drafts** or **Generate & Publish Arrival Windows** in `/doctor/arrival windows`. Nothing runs on a background cron or automatic schedule.
+- **Single-Doctor Scope:** Arrival Windows are strictly doctor-owned. There is no cross-doctor arrival window pooling or multi-practitioner coordination.
 - **Notifications:** In-app notifications and email delivery are supported.
 
 ---
@@ -401,7 +415,7 @@ When a doctor logs time off via `/doctor/time-off`:
 ## 🔄 Dynamic Rescheduling & Automated Waitlist
 
 - **Patient Self-Service Reschedule (`/book/reschedule/[appointmentId]`):** Patients can reschedule up to **2 times**, at least **2 hours before start** (waived if disrupted by doctor absence).
-- **Atomic Slot Swap:** Inside a single database transaction, the target slot is claimed (`BOOKED`), the previous slot is freed (`releaseSlot`), and the appointment is reassigned while strictly preserving `CONFIRMED` status with `rescheduleCount` incremented and `waveId` cleared.
+- **Atomic Slot Swap:** Inside a single database transaction, the target slot is claimed (`BOOKED`), the previous slot is freed (`releaseSlot`), and the appointment is reassigned while strictly preserving `CONFIRMED` status with `rescheduleCount` incremented and `arrival windowId` cleared.
 - **Automated Waitlist:** When all slots for a doctor are booked, patients can join the waitlist with a target date range.
 - **Automated Release Trigger:** Whenever an active appointment is cancelled or rescheduled, `releaseSlot` checks `waitlist_entries` and dispatches `SLOT_AVAILABLE` notifications to waiting patients.
 
@@ -413,12 +427,12 @@ The system supports real-time notifications with unread counts and a dedicated n
 
 | Notification Type | Trigger Point | Description |
 |---|---|---|
-| `APPOINTMENT_CONFIRMED` | Patient books consultation | Patient informed consultation is booked and confirmed (includes arrival window if covered by published wave). |
+| `APPOINTMENT_CONFIRMED` | Patient books consultation | Patient informed consultation is booked and confirmed (includes arrival window if covered by published arrival window). |
 | `APPOINTMENT_CANCELLED` | Patient / Doctor cancels | Counterpart informed consultation is cancelled. |
 | `APPOINTMENT_RESCHEDULED` | Patient / Doctor reschedules | Counterpart informed of updated slot time. |
 | `DOCTOR_ABSENCE` | Doctor schedules time off | Patients notified of disruption with free reschedule link. |
 | `SLOT_AVAILABLE` | `releaseSlot` finds waitlist match | Waitlisted patients alerted that a slot opened up. |
-| `WAVE_PUBLISHED` | Wave published or booking assigned | Patient notified of their specific arrival window. |
+| `WAVE_PUBLISHED` | Arrival Window published or booking assigned | Patient notified of their specific arrival window. |
 | `QUEUE_DELAY` | `startConsultation` / `endConsultation` | Triggered only if estimated delay exceeds 20 minutes (debounced via `delayNotifiedAt`, once per day). |
 
 ---
@@ -477,12 +491,12 @@ Ensure `DATABASE_URL` (pooled) and `DIRECT_URL` (non-pooled) are configured in y
 npm run db:deploy
 ```
 
-This applies migration `20261029000000_live_queue_waves_scheduling` which:
-- Adds enum types `VisitStream`, `WaveStatus`, and `NotificationType`.
+This applies migration `20261029000000_live_queue_arrival windows_scheduling` which:
+- Adds enum types `VisitStream`, `Arrival WindowStatus`, and `NotificationType`.
 - Extends enum `AppointmentStatus` with `CHECKED_IN` and `IN_CONSULTATION`.
-- Adds tables `waves`, `doctor_time_off`, `notifications`, and `waitlist_entries`.
+- Adds tables `arrival windows`, `doctor_time_off`, `notifications`, and `waitlist_entries`.
 - Preserves the partial unique index `appointments_availability_id_active_unique`.
-- Enforces check constraints `waves_check_end_after_start` and `doctor_time_off_check_end_after_start`.
+- Enforces check constraints `arrival windows_check_end_after_start` and `doctor_time_off_check_end_after_start`.
 
 ### 2. Verify Database State
 Run the concurrency verification script to confirm database connectivity, schema integrity, and the partial unique index:
