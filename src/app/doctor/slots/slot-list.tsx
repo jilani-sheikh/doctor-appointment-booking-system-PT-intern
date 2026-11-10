@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toggleBlockSlotAction, deleteSlotAction } from "@/lib/actions/slots";
 import { cancelAllSlotsForDateAction } from "@/lib/actions/slots";
@@ -11,13 +11,86 @@ import { toast } from "sonner";
 import { Ban, CheckCircle2, Clock, Trash2, Calendar } from "lucide-react";
 import { formatSlotRange, getISTDateString } from "@/lib/time";
 import type { SerializedSlot } from "@/lib/serializers";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { expandAvailabilityAction, shrinkAvailabilityAction } from "@/lib/actions/slots";
+import { calculateElasticRange, type ElasticEdge, type ElasticOperation } from "@/lib/scheduling";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 export type { SerializedSlot };
 
 interface SlotListProps {
   slotsGrouped: Record<string, SerializedSlot[]>;
+  generatedGroups: Record<string, GeneratedGroup[]>;
 }
 
-export function SlotList({ slotsGrouped }: SlotListProps) {
+interface GeneratedGroup {
+  id: string;
+  scheduleId: string;
+  type: "WAVE" | "STREAM";
+  startTime: string;
+  endTime: string;
+  durationMinutes: number;
+  capacity: number;
+}
+
+function ElasticDialog({ group, operation, open, onOpenChange, isPending, onComplete }: {
+  group: GeneratedGroup;
+  operation: ElasticOperation;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  isPending: boolean;
+  onComplete: (result: { success: boolean; message?: string; error?: string; affectedAppointmentsCount?: number }) => void;
+}) {
+  const [edge, setEdge] = useState<ElasticEdge>("END");
+  const [steps, setSteps] = useState(1);
+  const [applyToFuture, setApplyToFuture] = useState(false);
+  const [, startTransition] = useTransition();
+  const current = { startTime: new Date(group.startTime), endTime: new Date(group.endTime) };
+  let preview: ReturnType<typeof calculateElasticRange> | null = null;
+  let validationError = "";
+  try {
+    preview = calculateElasticRange(current, edge, steps, group.durationMinutes, operation);
+    if ((preview.endTime.getTime() - preview.startTime.getTime()) % (group.durationMinutes * 60_000) !== 0) {
+      validationError = "The new range must stay divisible by the duration.";
+    }
+  } catch (error) {
+    validationError = error instanceof Error ? error.message : "Invalid range.";
+  }
+  const submit = () => {
+    if (!preview || validationError) return;
+    const date = getISTDateString(new Date(group.startTime));
+    const action = operation === "SHRINK" ? shrinkAvailabilityAction : expandAvailabilityAction;
+    startTransition(async () => {
+      const result = await action({ scheduleId: group.scheduleId, date, edge, steps, applyToFuture });
+      onComplete(result);
+    });
+  };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{operation === "SHRINK" ? "Shrink" : "Expand"} {group.type === "WAVE" ? "Wave" : "Stream"} window</DialogTitle>
+          <DialogDescription>Adjust this generated window in steps of {group.durationMinutes} minutes.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label htmlFor={`edge-${group.id}`}>Edge</Label><select id={`edge-${group.id}`} className="h-8 w-full rounded-md border bg-background px-2 text-sm" value={edge} onChange={(event) => setEdge(event.target.value as ElasticEdge)}><option value="START">Start</option><option value="END">End</option></select></div>
+            <div><Label htmlFor={`steps-${group.id}`}>Steps</Label><Input id={`steps-${group.id}`} type="number" min={1} max={100} value={steps} onChange={(event) => setSteps(Number(event.target.value))} /></div>
+          </div>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={applyToFuture} onChange={(event) => setApplyToFuture(event.target.checked)} />Apply to all future dates of this recurring schedule</label>
+          <div className="rounded-md border bg-muted/30 p-3 text-sm">
+            <p>New range: {preview ? `${formatSlotRange(preview.startTime.toISOString(), preview.endTime.toISOString())}` : "Invalid"}</p>
+            <p className="text-muted-foreground">{preview ? `${operation === "SHRINK" ? "Removed" : "Added"} ${steps} interval${steps === 1 ? "" : "s"} · ${steps * group.capacity} seat${steps * group.capacity === 1 ? "" : "s"} affected` : validationError}</p>
+          </div>
+          {validationError && <p role="alert" className="text-sm text-destructive">{validationError}</p>}
+        </div>
+        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={isPending || Boolean(validationError) || !preview} onClick={submit}>Confirm</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function SlotList({ slotsGrouped, generatedGroups }: SlotListProps) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -117,6 +190,7 @@ export function SlotList({ slotsGrouped }: SlotListProps) {
               </div>
             </CardHeader>
             <CardContent className="p-4">
+              {(generatedGroups[dateKey] ?? []).map((group) => <ElasticControls key={group.id} group={group} isPending={isPending} router={router} />)}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                 {slots.map((slot) => {
                   const range = formatSlotRange(slot.startTime, slot.endTime);
@@ -222,6 +296,23 @@ export function SlotList({ slotsGrouped }: SlotListProps) {
           </Card>
         );
       })}
+    </div>
+  );
+}
+
+function ElasticControls({ group, isPending, router }: { group: GeneratedGroup; isPending: boolean; router: ReturnType<typeof useRouter> }) {
+  const [operation, setOperation] = useState<ElasticOperation | null>(null);
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 p-3">
+      <span className="text-sm font-medium">{group.type === "WAVE" ? "Wave" : "Stream"} window · {formatSlotRange(group.startTime, group.endTime)}</span>
+      <div className="flex gap-2">
+        <Button size="xs" variant="outline" disabled={isPending} onClick={() => setOperation("SHRINK")}>Shrink</Button>
+        <Button size="xs" variant="outline" disabled={isPending} onClick={() => setOperation("EXPAND")}>Expand</Button>
+      </div>
+      {operation && <ElasticDialog group={group} operation={operation} open onOpenChange={(open) => !open && setOperation(null)} isPending={isPending} onComplete={(result) => {
+        if (result.success) { toast.success(result.message ?? "Availability updated."); setOperation(null); router.refresh(); }
+        else toast.error(result.error ?? "Unable to update availability.");
+      }} />}
     </div>
   );
 }

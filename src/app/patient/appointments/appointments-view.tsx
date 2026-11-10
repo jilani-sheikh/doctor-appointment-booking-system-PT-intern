@@ -34,6 +34,8 @@ import {
   Loader2,
 } from "lucide-react";
 import { formatTimeIST, formatSlotRange, formatSlotDateTimeRangeIST } from "@/lib/time";
+import { isEligibleForDisruptedDashboardAlternatives } from "@/lib/scheduling";
+import { DisruptedAlternativeSelector } from "@/components/patient/disrupted-alternative-selector";
 import { STREAM_CONFIGS } from "@/lib/streams";
 import { EMERGENCY_DISCLAIMER } from "@/lib/queue";
 import type { AppointmentStatus } from "@/generated/prisma/client";
@@ -185,7 +187,15 @@ export function AppointmentsView({
           const startDate = new Date(appt.slotStartTime);
           const endDate = new Date(appt.slotEndTime);
           const streamConfig = STREAM_CONFIGS[appt.stream];
-          const isDisrupted = Boolean(appt.disruptedAt);
+          const isDisrupted = Boolean(appt.disruptedAt) && isUpcomingTab;
+          const showDisruptedSelector =
+            isUpcomingTab &&
+            isEligibleForDisruptedDashboardAlternatives({
+              status: appt.status,
+              startTime: startDate,
+              disruptedAt: appt.disruptedAt,
+              rescheduleStatus: appt.rescheduleStatus,
+            });
           const isPendingHold = appt.status === "PENDING_PAYMENT";
 
           return (
@@ -234,33 +244,46 @@ export function AppointmentsView({
                   </div>
                 )}
 
-                {/* Disruption Alert Banner */}
-                {isDisrupted && (
-                  <div className="rounded-md bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700 p-3 text-xs text-amber-900 dark:text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-                      <div>
-                        <strong className="font-semibold">Schedule Disrupted: </strong>
-                        <span>{appt.disruptionReason ?? "Schedule disruption"}. Please reschedule or cancel with 100% refund.</span>
+                {/* Disrupted Appointment Alternatives Selector or Disruption Banner */}
+                {showDisruptedSelector ? (
+                  <DisruptedAlternativeSelector
+                    appointmentId={appt.id}
+                    doctorName={appt.doctor.name}
+                    specialization={appt.doctor.specialization}
+                    originalSlotStart={startDate}
+                    originalSlotEnd={endDate}
+                    disruptionReason={appt.disruptionReason}
+                    suggestedAlternatives={appt.suggestedAlternatives}
+                    onCancelClick={() => openCancelModal(appt)}
+                  />
+                ) : (
+                  isDisrupted && (
+                    <div className="rounded-md bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700 p-3 text-xs text-amber-900 dark:text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                        <div>
+                          <strong className="font-semibold">Schedule Disrupted: </strong>
+                          <span>{appt.disruptionReason ?? "Schedule disruption"}. Please reschedule or cancel with 100% refund.</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Link
+                          href={`/book/reschedule/${appt.id}`}
+                          className={buttonVariants({ size: "xs", variant: "default", className: "bg-amber-600 hover:bg-amber-700 text-white" })}
+                        >
+                          Reschedule
+                        </Link>
+                        <Button
+                          variant="destructive"
+                          size="xs"
+                          disabled={isPending}
+                          onClick={() => openCancelModal(appt)}
+                        >
+                          Cancel Consultation
+                        </Button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Link
-                        href={`/book/reschedule/${appt.id}`}
-                        className={buttonVariants({ size: "xs", variant: "default", className: "bg-amber-600 hover:bg-amber-700 text-white" })}
-                      >
-                        Reschedule
-                      </Link>
-                      <Button
-                        variant="destructive"
-                        size="xs"
-                        disabled={isPending}
-                        onClick={() => openCancelModal(appt)}
-                      >
-                        Cancel Consultation
-                      </Button>
-                    </div>
-                  </div>
+                  )
                 )}
 
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">

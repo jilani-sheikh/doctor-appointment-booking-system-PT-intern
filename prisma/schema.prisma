@@ -58,6 +58,12 @@ enum AppointmentStatus {
   NO_SHOW
 }
 
+enum RescheduleLifecycleStatus {
+  PENDING_RESCHEDULING
+  RESCHEDULED
+  RESOLVED_MANUALLY
+}
+
 enum VisitStream {
   NEW_CONSULTATION
   FOLLOW_UP
@@ -330,8 +336,9 @@ model Appointment {
   waveId                        String?           @map("wave_id")
   rescheduledFromAvailabilityId String?           @map("rescheduled_from_availability_id")
   rescheduleCount               Int               @default(0) @map("reschedule_count")
-  disruptedAt                   DateTime?         @map("disrupted_at")
-  disruptionReason              String?           @map("disruption_reason") @db.Text
+  disruptedAt                   DateTime?                  @map("disrupted_at")
+  disruptionReason              String?                    @map("disruption_reason") @db.Text
+  rescheduleStatus              RescheduleLifecycleStatus? @map("reschedule_status")
   delayNotifiedAt               DateTime?         @map("delay_notified_at")
   cancellationReason            String?           @map("cancellation_reason") @db.Text
   cancelledBy                   String?           @map("cancelled_by")

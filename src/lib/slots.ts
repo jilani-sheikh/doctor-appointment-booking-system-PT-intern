@@ -37,13 +37,55 @@ export async function releaseSlot(
       doctorId: true,
       startTime: true,
       endTime: true,
+      kind: true,
+      status: true,
       capacity: true,
       activeCount: true,
+      parent: {
+        select: {
+          startTime: true,
+          endTime: true,
+          status: true,
+        },
+      },
+      schedule: {
+        select: {
+          status: true,
+        },
+      },
     },
   });
 
   if (!slot) {
     throw new Error(`Availability slot not found: ${availabilityId}`);
+  }
+
+  // Never reactivate a WAVE_SLOT that falls outside its shrunk WAVE_PARENT window or belongs to a cancelled schedule
+  const isShrunkWaveChild =
+    slot.kind === "WAVE_SLOT" &&
+    slot.parent != null &&
+    (slot.startTime < slot.parent.startTime ||
+      slot.endTime > slot.parent.endTime ||
+      slot.parent.status === SlotStatus.BLOCKED);
+  const isCancelledSchedule = slot.schedule?.status === "CANCELLED";
+
+  if (isShrunkWaveChild || isCancelledSchedule) {
+    await client.$executeRaw`
+      UPDATE "availabilities"
+      SET "active_count" = GREATEST("active_count" - 1, 0),
+          "status" = 'BLOCKED'::"SlotStatus"
+      WHERE "id" = ${availabilityId}
+    `;
+
+    return {
+      availabilityId: slot.id,
+      doctorId: slot.doctorId,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      newStatus: SlotStatus.BLOCKED,
+      newlyAvailable: false,
+      blockedByTimeOffId: null,
+    };
   }
 
   // Check if slot overlaps any active doctor time-off

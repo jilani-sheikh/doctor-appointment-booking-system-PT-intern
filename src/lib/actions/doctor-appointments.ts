@@ -103,6 +103,7 @@ export async function updateDoctorAppointmentStatusAction(
               cancelledBy: "DOCTOR",
               cancellationReason: "Cancelled by practitioner",
               waveId: null,
+              rescheduleStatus: null,
             },
           });
 

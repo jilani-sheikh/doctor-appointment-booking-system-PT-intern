@@ -8,7 +8,13 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Calendar, User, Clock, ArrowRight, Activity, AlertCircle } from "lucide-react";
 import { formatDateIST, formatTimeIST, formatSlotRange, formatSlotDateTimeRangeIST, getTodayISTDateString, getISTDateString } from "@/lib/time";
-import { effectiveSlot } from "@/lib/scheduling";
+import {
+  effectiveSlot,
+  isEligibleForDisruptedDashboardAlternatives,
+  type ThreeLevelAlternativeSuggestions,
+} from "@/lib/scheduling";
+import { discoverAlternativeAppointmentsForPatient } from "@/lib/actions/reschedule";
+import { DisruptedAlternativeSelector } from "@/components/patient/disrupted-alternative-selector";
 import { calculateQueueEstimates, EMERGENCY_DISCLAIMER, type QueueAppointmentItem } from "@/lib/queue";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
 import { DeleteProfileDialog } from "@/components/auth/delete-profile-dialog";
@@ -75,6 +81,33 @@ export default async function PatientDashboardPage() {
 
   const pastApptsCount = allAppointments.length - upcomingAppts.length;
   const nextAppointment = upcomingAppts[0] ?? null;
+
+  // Discover recommended alternatives for any disrupted upcoming appointments pending rescheduling
+  const disruptedUpcomingAppts = upcomingAppts.filter((a) =>
+    isEligibleForDisruptedDashboardAlternatives(
+      {
+        status: a.status,
+        startTime: effectiveSlot(a).start,
+        disruptedAt: a.disruptedAt,
+        rescheduleStatus: a.rescheduleStatus,
+      },
+      now
+    )
+  );
+
+  const suggestedAlternativesByApptId = new Map<string, ThreeLevelAlternativeSuggestions>();
+  await Promise.all(
+    disruptedUpcomingAppts.map(async (appt) => {
+      const suggestions = await discoverAlternativeAppointmentsForPatient(appt.id, now);
+      if (suggestions) {
+        suggestedAlternativesByApptId.set(appt.id, suggestions);
+      }
+    })
+  );
+
+  const additionalDisruptedAppts = disruptedUpcomingAppts.filter(
+    (a) => a.id !== nextAppointment?.id
+  );
 
   // Find active appointment for today (if any)
   const todayActiveAppt = upcomingAppts.find(
@@ -319,40 +352,79 @@ export default async function PatientDashboardPage() {
                 Your closest upcoming medical consultation
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
               {nextAppointment ? (
-                <div className="rounded-xl border border-primary/20 bg-primary/5 p-5 space-y-3">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <span className="text-lg font-bold text-foreground">
-                        Dr. {nextAppointment.availability.doctor.user.name}
-                      </span>
-                      <p className="text-xs text-primary font-medium">
-                        {nextAppointment.availability.doctor.specialization}
-                      </p>
+                <>
+                  <div className="rounded-xl border border-primary/20 bg-primary/5 p-5 space-y-3">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <span className="text-lg font-bold text-foreground">
+                          Dr. {nextAppointment.availability.doctor.user.name ?? "Doctor"}
+                        </span>
+                        <p className="text-xs text-primary font-medium">
+                          {nextAppointment.availability.doctor.specialization}
+                        </p>
+                      </div>
+
+                      <Badge
+                        variant={nextAppointment.status === "CONFIRMED" ? "success" : "warning"}
+                        className="text-[10px] uppercase"
+                      >
+                        {nextAppointment.status}
+                      </Badge>
                     </div>
 
-                    <Badge
-                      variant={nextAppointment.status === "CONFIRMED" ? "success" : "warning"}
-                      className="text-[10px] uppercase"
-                    >
-                      {nextAppointment.status}
-                    </Badge>
+                    <div className="flex items-center gap-2 text-xs text-foreground font-semibold pt-1">
+                      <Clock className="h-4 w-4 text-primary shrink-0" />
+                      <span>
+                        {formatSlotDateTimeRangeIST(effectiveSlot(nextAppointment).start, effectiveSlot(nextAppointment).end)}
+                      </span>
+                    </div>
+
+                    {nextAppointment.reason && (
+                      <p className="text-xs text-muted-foreground border-t border-primary/10 pt-2">
+                        <strong className="text-foreground">Reason:</strong> {nextAppointment.reason}
+                      </p>
+                    )}
                   </div>
 
-                  <div className="flex items-center gap-2 text-xs text-foreground font-semibold pt-1">
-                    <Clock className="h-4 w-4 text-primary shrink-0" />
-                    <span>
-                      {formatSlotDateTimeRangeIST(effectiveSlot(nextAppointment).start, effectiveSlot(nextAppointment).end)}
-                    </span>
-                  </div>
-
-                  {nextAppointment.reason && (
-                    <p className="text-xs text-muted-foreground border-t border-primary/10 pt-2">
-                      <strong className="text-foreground">Reason:</strong> {nextAppointment.reason}
-                    </p>
+                  {isEligibleForDisruptedDashboardAlternatives(
+                    {
+                      status: nextAppointment.status,
+                      startTime: effectiveSlot(nextAppointment).start,
+                      disruptedAt: nextAppointment.disruptedAt,
+                      rescheduleStatus: nextAppointment.rescheduleStatus,
+                    },
+                    now
+                  ) && (
+                    <DisruptedAlternativeSelector
+                      appointmentId={nextAppointment.id}
+                      doctorName={nextAppointment.availability.doctor.user.name ?? "Doctor"}
+                      specialization={nextAppointment.availability.doctor.specialization}
+                      originalSlotStart={effectiveSlot(nextAppointment).start}
+                      originalSlotEnd={effectiveSlot(nextAppointment).end}
+                      disruptionReason={nextAppointment.disruptionReason}
+                      suggestedAlternatives={
+                        suggestedAlternativesByApptId.get(nextAppointment.id) ?? null
+                      }
+                    />
                   )}
-                </div>
+
+                  {additionalDisruptedAppts.map((disruptedAppt) => (
+                    <DisruptedAlternativeSelector
+                      key={disruptedAppt.id}
+                      appointmentId={disruptedAppt.id}
+                      doctorName={disruptedAppt.availability.doctor.user.name ?? "Doctor"}
+                      specialization={disruptedAppt.availability.doctor.specialization}
+                      originalSlotStart={effectiveSlot(disruptedAppt).start}
+                      originalSlotEnd={effectiveSlot(disruptedAppt).end}
+                      disruptionReason={disruptedAppt.disruptionReason}
+                      suggestedAlternatives={
+                        suggestedAlternativesByApptId.get(disruptedAppt.id) ?? null
+                      }
+                    />
+                  ))}
+                </>
               ) : (
                 <div className="rounded-lg border border-dashed border-border p-8 text-center space-y-3 bg-muted/20">
                   <div className="h-10 w-10 rounded-full bg-primary/10 text-primary mx-auto flex items-center justify-center">

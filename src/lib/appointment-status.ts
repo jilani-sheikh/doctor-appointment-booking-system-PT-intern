@@ -160,13 +160,6 @@ export function canPatientReschedule(
   },
   now: Date = new Date()
 ): { allowed: boolean; reason?: string } {
-  if (appt.rescheduleCount >= MAX_RESCHEDULE_COUNT) {
-    return {
-      allowed: false,
-      reason: `Maximum of ${MAX_RESCHEDULE_COUNT} reschedules reached for this appointment.`,
-    };
-  }
-
   if (appt.status !== AppointmentStatus.PENDING && appt.status !== AppointmentStatus.CONFIRMED) {
     return {
       allowed: false,
@@ -176,6 +169,13 @@ export function canPatientReschedule(
 
   if (appt.disruptedAt) {
     return { allowed: true };
+  }
+
+  if (appt.rescheduleCount >= MAX_RESCHEDULE_COUNT) {
+    return {
+      allowed: false,
+      reason: `Maximum of ${MAX_RESCHEDULE_COUNT} reschedules reached for this appointment.`,
+    };
   }
 
   const start = new Date(appt.startTime).getTime();

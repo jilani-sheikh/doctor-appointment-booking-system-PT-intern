@@ -11,6 +11,8 @@ import {
   shouldRestoreRecurringDate,
   scheduleDateRelationship,
   overrideRequiresConfirmation,
+  calculateElasticRange,
+  diffAvailabilityIntervals,
 } from "@/lib/scheduling";
 import { calculateQueueEstimates } from "@/lib/queue";
 
@@ -217,4 +219,27 @@ test("overlap relationships distinguish conflicts, skips, and overrides", () => 
   assert.equal(shouldRestoreRecurringDate(0, 0), true);
   assert.equal(shouldRestoreRecurringDate(1, 0), false);
   assert.equal(shouldRestoreRecurringDate(0, 1), false);
+});
+
+test("elastic ranges shrink and expand by duration steps", () => {
+  const range = { startTime: new Date("2026-11-09T04:30:00Z"), endTime: new Date("2026-11-09T06:30:00Z") };
+  const shrunk = calculateElasticRange(range, "START", 1, 30, "SHRINK");
+  assert.equal(shrunk.startTime.toISOString(), "2026-11-09T05:00:00.000Z");
+  const expanded = calculateElasticRange(range, "END", 2, 30, "EXPAND");
+  assert.equal(expanded.endTime.toISOString(), "2026-11-09T07:30:00.000Z");
+  assert.equal(diffAvailabilityIntervals(range, expanded, 30).added.length, 2);
+  assert.equal(diffAvailabilityIntervals(range, shrunk, 30).removed.length, 1);
+});
+
+test("elastic ranges never remove the last interval", () => {
+  assert.throws(
+    () => calculateElasticRange(
+      { startTime: new Date("2026-11-09T04:30:00Z"), endTime: new Date("2026-11-09T05:00:00Z") },
+      "END",
+      1,
+      30,
+      "SHRINK",
+    ),
+    /at least one interval/,
+  );
 });

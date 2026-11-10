@@ -53,11 +53,12 @@ export default async function DoctorSlotsPage() {
     where: {
       doctorId: doctor.id,
       startTime: { gte: now },
-      kind: { not: "WAVE_PARENT" },
+      kind: { not: "SINGLE" },
     },
     orderBy: {
       startTime: "asc",
     },
+    include: { schedule: { select: { id: true, type: true, durationMinutes: true, capacity: true } } },
   });
   const schedules = await db.availabilitySchedule.findMany({
     where: { doctorId: doctor.id, status: "ACTIVE" },
@@ -67,6 +68,15 @@ export default async function DoctorSlotsPage() {
 
   // Group slots by formatted date string in IST
   const slotsGrouped: Record<string, SerializedSlot[]> = {};
+  const generatedGroups: Record<string, Array<{
+    id: string;
+    scheduleId: string;
+    type: "WAVE" | "STREAM";
+    startTime: string;
+    endTime: string;
+    durationMinutes: number;
+    capacity: number;
+  }>> = {};
 
   for (const slot of rawSlots) {
     const dateKey = formatDateIST(slot.startTime, {
@@ -76,11 +86,22 @@ export default async function DoctorSlotsPage() {
       year: "numeric",
     });
 
-    if (!slotsGrouped[dateKey]) {
+    if (slot.kind !== "WAVE_PARENT" && !slotsGrouped[dateKey]) {
       slotsGrouped[dateKey] = [];
     }
-
-    slotsGrouped[dateKey].push(toSlotDto(slot));
+    if (slot.kind !== "WAVE_PARENT") slotsGrouped[dateKey]?.push(toSlotDto(slot));
+    if (slot.kind === "WAVE_PARENT" || slot.kind === "STREAM_WINDOW") {
+      if (!generatedGroups[dateKey]) generatedGroups[dateKey] = [];
+      if (slot.schedule) generatedGroups[dateKey].push({
+        id: slot.id,
+        scheduleId: slot.schedule.id,
+        type: slot.schedule.type,
+        startTime: slot.startTime.toISOString(),
+        endTime: slot.endTime.toISOString(),
+        durationMinutes: slot.schedule.durationMinutes,
+        capacity: slot.schedule.capacity,
+      });
+    }
   }
 
   return (
@@ -110,7 +131,7 @@ export default async function DoctorSlotsPage() {
           <SlotGeneratorForm />
         </div>
         <div className="lg:col-span-7">
-          <SlotList slotsGrouped={slotsGrouped} />
+          <SlotList slotsGrouped={slotsGrouped} generatedGroups={generatedGroups} />
         </div>
       </div>
     </div>
