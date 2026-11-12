@@ -8,7 +8,21 @@ import { Role, DoctorStatus, SlotStatus } from "@/generated/prisma/client";
 import { revalidatePath } from "next/cache";
 import { releaseSlot } from "@/lib/slots";
 import { scheduleSchema, type ScheduleInput, elasticAvailabilitySchema, type ElasticAvailabilityInput } from "@/lib/validations/slots";
-import { generateScheduleAvailabilities, validateScheduleInput, planScheduleDates, shouldRestoreRecurringDate, overrideRequiresConfirmation, scheduleDateRelationship, calculateElasticRange, diffAvailabilityIntervals, type ElasticEdge, type ElasticOperation } from "@/lib/scheduling";
+import {
+  generateScheduleAvailabilities,
+  validateScheduleInput,
+  planScheduleDates,
+  shouldRestoreRecurringDate,
+  overrideRequiresConfirmation,
+  scheduleDateRelationship,
+  calculateElasticRange,
+  diffAvailabilityIntervals,
+  identifyAffectedElasticAppointments,
+  buildElasticRescheduleDedupeKey,
+  type ElasticEdge,
+  type ElasticOperation,
+  type IdentifiedAffectedElasticAppointment,
+} from "@/lib/scheduling";
 import { getTodayISTDateString } from "@/lib/time";
 import { AvailabilityKind, RescheduleLifecycleStatus } from "@/generated/prisma/client";
 import { AppointmentStatus, RefundReason, NotificationType, PaymentStatus } from "@/generated/prisma/client";
@@ -519,16 +533,6 @@ const OVERRIDE_ACTIVE_STATUSES = [
     return dates;
   }
 
-  interface AffectedShrinkAppointment {
-    id: string;
-    patientUserId: string;
-    originalStartTime: Date;
-    originalEndTime: Date;
-    isStreamWindow?: boolean;
-    newStartTime?: Date;
-    newEndTime?: Date;
-  }
-
   async function elasticAvailabilityAction(input: ElasticAvailabilityInput, operation: ElasticOperation) {
     const user = await requireRole(Role.DOCTOR);
     const doctor = user.doctor;
@@ -551,10 +555,9 @@ const OVERRIDE_ACTIVE_STATUSES = [
     if (dates.length === 0) return { success: false, error: "No future dates remain in this schedule." };
 
     const availableSeats: Array<{ doctorId: string; startTime: Date }> = [];
-    const allAffectedAppointments: AffectedShrinkAppointment[] = [];
+    const allAffectedAppointments: IdentifiedAffectedElasticAppointment[] = [];
     const appliedDates: string[] = [];
     const failedDates: string[] = [];
-    const shrinkBatchTimestamp = Date.now();
 
     for (const date of dates) {
       try {
@@ -748,8 +751,70 @@ const OVERRIDE_ACTIVE_STATUSES = [
                   availableSeats.push({ doctorId: doctor.id, startTime: created.startTime });
                 }
               }
-            } else if (diff.added.length > 0) {
-              availableSeats.push({ doctorId: doctor.id, startTime: diff.added[0]!.startTime });
+            } else {
+              if (diff.added.length > 0) {
+                availableSeats.push({ doctorId: doctor.id, startTime: diff.added[0]!.startTime });
+              }
+
+              // STREAM expand: check whether active appointments on the continuous STREAM_WINDOW have their
+              // effective consultation window altered by the expansion.
+              const streamExpandAppointments = await tx.appointment.findMany({
+                where: {
+                  availabilityId: existingRow.id,
+                  status: { in: ELASTIC_ACTIVE_STATUSES },
+                },
+                select: {
+                  id: true,
+                  status: true,
+                  slotStart: true,
+                  slotEnd: true,
+                  patient: { select: { userId: true } },
+                },
+              });
+
+              const affectedStreamOnExpand = identifyAffectedElasticAppointments({
+                operation: "EXPAND",
+                scheduleType: "STREAM",
+                previousRange: {
+                  startTime: existingRow.startTime,
+                  endTime: existingRow.endTime,
+                },
+                nextRange: next,
+                appointments: streamExpandAppointments.map((a) => ({
+                  id: a.id,
+                  patientUserId: a.patient.userId,
+                  status: a.status,
+                  slotStart: a.slotStart,
+                  slotEnd: a.slotEnd,
+                })),
+              });
+
+              if (affectedStreamOnExpand.length > 0) {
+                const reason = affectedStreamOnExpand[0]!.disruptionReason;
+                await tx.appointment.updateMany({
+                  where: { id: { in: affectedStreamOnExpand.map((a) => a.id) } },
+                  data: {
+                    disruptedAt: now,
+                    disruptionReason: reason,
+                    rescheduleStatus: RescheduleLifecycleStatus.PENDING_RESCHEDULING,
+                    waveId: null,
+                  },
+                });
+
+                for (const appt of streamExpandAppointments) {
+                  if (!appt.slotStart && !appt.slotEnd) {
+                    await syncAppointmentReminders(tx, {
+                      appointmentId: appt.id,
+                      userId: appt.patient.userId,
+                      slotStartTime: next.startTime,
+                      slotEndTime: next.endTime,
+                      status: appt.status,
+                    });
+                  }
+                }
+
+                allAffectedAppointments.push(...affectedStreamOnExpand);
+              }
             }
 
             await tx.availability.update({
@@ -811,27 +876,34 @@ const OVERRIDE_ACTIVE_STATUSES = [
               });
             }
 
-            const dateAffected: AffectedShrinkAppointment[] = [];
-            for (const child of removedChildren) {
-              for (const appointment of child.appointments) {
-                if (ELASTIC_ACTIVE_STATUS_SET.has(appointment.status)) {
-                  dateAffected.push({
-                    id: appointment.id,
-                    patientUserId: appointment.patient.userId,
-                    originalStartTime: appointment.slotStart ?? child.startTime,
-                    originalEndTime: appointment.slotEnd ?? child.endTime,
-                  });
-                }
-              }
-            }
+            const dateAffected = identifyAffectedElasticAppointments({
+              operation: "SHRINK",
+              scheduleType: "WAVE",
+              previousRange: {
+                startTime: existingRow.startTime,
+                endTime: existingRow.endTime,
+              },
+              nextRange: next,
+              removedIntervals: diff.removed,
+              appointments: children.flatMap((child) =>
+                child.appointments.map((appointment) => ({
+                  id: appointment.id,
+                  patientUserId: appointment.patient.userId,
+                  status: appointment.status,
+                  slotStart: appointment.slotStart,
+                  slotEnd: appointment.slotEnd,
+                  slotStartTime: child.startTime,
+                  slotEndTime: child.endTime,
+                }))
+              ),
+            });
 
             if (dateAffected.length > 0) {
               await tx.appointment.updateMany({
                 where: { id: { in: dateAffected.map((a) => a.id) } },
                 data: {
                   disruptedAt: now,
-                  disruptionReason:
-                    "Doctor availability was reduced. Please select an alternative consultation time.",
+                  disruptionReason: dateAffected[0]!.disruptionReason,
                   rescheduleStatus: RescheduleLifecycleStatus.PENDING_RESCHEDULING,
                   waveId: null,
                 },
@@ -873,16 +945,22 @@ const OVERRIDE_ACTIVE_STATUSES = [
             },
           });
 
-          const affectedStreamAppointments = streamAppointments.filter((appointment) => {
-            if (!appointment.slotStart || !appointment.slotEnd) {
-              // Stream appointments have null slotStart and slotEnd; treat all active appointments in the window as potentially affected
-              return true;
-            }
-            return diff.removed.some(
-              (interval) =>
-                appointment.slotStart! < interval.endTime &&
-                appointment.slotEnd! > interval.startTime
-            );
+          const affectedStreamAppointments = identifyAffectedElasticAppointments({
+            operation: "SHRINK",
+            scheduleType: "STREAM",
+            previousRange: {
+              startTime: existingRow.startTime,
+              endTime: existingRow.endTime,
+            },
+            nextRange: next,
+            removedIntervals: diff.removed,
+            appointments: streamAppointments.map((appointment) => ({
+              id: appointment.id,
+              patientUserId: appointment.patient.userId,
+              status: appointment.status,
+              slotStart: appointment.slotStart,
+              slotEnd: appointment.slotEnd,
+            })),
           });
 
           if (affectedStreamAppointments.length > 0) {
@@ -890,14 +968,13 @@ const OVERRIDE_ACTIVE_STATUSES = [
               where: { id: { in: affectedStreamAppointments.map((a) => a.id) } },
               data: {
                 disruptedAt: now,
-                disruptionReason:
-                  "Doctor's continuous consultation window was shortened. Because Stream bookings do not have individual sub-slot times, your appointment was flagged in case the updated window hours no longer work for you. Your seat remains protected, or you may reschedule.",
+                disruptionReason: affectedStreamAppointments[0]!.disruptionReason,
                 rescheduleStatus: RescheduleLifecycleStatus.PENDING_RESCHEDULING,
                 waveId: null,
               },
             });
 
-            for (const appointment of affectedStreamAppointments) {
+            for (const appointment of streamAppointments) {
               if (!appointment.slotStart && !appointment.slotEnd) {
                 await syncAppointmentReminders(tx, {
                   appointmentId: appointment.id,
@@ -907,17 +984,9 @@ const OVERRIDE_ACTIVE_STATUSES = [
                   status: appointment.status,
                 });
               }
-
-              allAffectedAppointments.push({
-                id: appointment.id,
-                patientUserId: appointment.patient.userId,
-                originalStartTime: appointment.slotStart ?? existingRow.startTime,
-                originalEndTime: appointment.slotEnd ?? existingRow.endTime,
-                isStreamWindow: true,
-                newStartTime: next.startTime,
-                newEndTime: next.endTime,
-              });
             }
+
+            allAffectedAppointments.push(...affectedStreamAppointments);
           }
 
           await tx.availability.update({
@@ -1006,6 +1075,15 @@ const OVERRIDE_ACTIVE_STATUSES = [
           href: `/book/reschedule/${affected.id}`,
         });
 
+        const dedupeKey = buildElasticRescheduleDedupeKey({
+          appointmentId: affected.id,
+          operation: affected.operation,
+          originalStartTime: affected.originalStartTime,
+          originalEndTime: affected.originalEndTime,
+          newStartTime: affected.newStartTime,
+          newEndTime: affected.newEndTime,
+        });
+
         await enqueuePatientNotifications(db, {
           userId: affected.patientUserId,
           appointmentId: affected.id,
@@ -1019,11 +1097,13 @@ const OVERRIDE_ACTIVE_STATUSES = [
             isStreamWindow: Boolean(affected.isStreamWindow),
             newStartTime: affected.newStartTime ? affected.newStartTime.toISOString() : undefined,
             newEndTime: affected.newEndTime ? affected.newEndTime.toISOString() : undefined,
+            operation: affected.operation,
+            disruptionReason: affected.disruptionReason,
             sameDayAlternatives: alternatives.sameDayAlternatives,
             upcomingDateAlternatives: alternatives.upcomingDateAlternatives,
             otherDoctorAlternatives: alternatives.otherDoctorAlternatives,
           },
-          dedupeKey: `email:elastic_shrink:${affected.id}:${shrinkBatchTimestamp}`,
+          dedupeKey,
         });
 
         if (totalSuggested === 0) {
@@ -1031,13 +1111,13 @@ const OVERRIDE_ACTIVE_STATUSES = [
             userId: user.id,
             type: NotificationType.GENERAL,
             title: "Manual Rescheduling Assistance Needed",
-            body: `An appointment affected by your schedule shrink has no open online alternatives. The patient's booking remains protected until manually resolved.`,
+            body: `An appointment affected by your schedule ${operation.toLowerCase()} has no open online alternatives. The patient's booking remains protected until manually resolved.`,
             href: "/doctor/appointments",
           });
         }
       } catch (notifErr) {
         console.error(
-          `[shrinkAvailabilityAction] Failed to dispatch notification for appointment ${affected.id}:`,
+          `[${operation.toLowerCase()}AvailabilityAction] Failed to dispatch notification for appointment ${affected.id}:`,
           notifErr
         );
       }
@@ -1051,7 +1131,7 @@ const OVERRIDE_ACTIVE_STATUSES = [
     revalidatePath("/patient/appointments");
 
     const affectedSuffix =
-      operation === "SHRINK" && allAffectedAppointments.length > 0
+      allAffectedAppointments.length > 0
         ? ` ${allAffectedAppointments.length} affected appointment(s) notified with rescheduling options.`
         : "";
     const failedSuffix =

@@ -609,3 +609,185 @@ export function getVisibleAlternativeCategories(
 
   return allCategories.filter((category) => category.items.length > 0);
 }
+
+const ELASTIC_ACTIVE_APPOINTMENT_STATUSES = new Set<string>([
+  "PENDING",
+  "CONFIRMED",
+  "CHECKED_IN",
+  "IN_CONSULTATION",
+  "PENDING_PAYMENT",
+]);
+
+export interface ElasticAppointmentCandidate {
+  id: string;
+  patientUserId: string;
+  status: string;
+  slotStart?: Date | null;
+  slotEnd?: Date | null;
+  slotStartTime?: Date;
+  slotEndTime?: Date;
+}
+
+export interface IdentifiedAffectedElasticAppointment {
+  id: string;
+  patientUserId: string;
+  originalStartTime: Date;
+  originalEndTime: Date;
+  isStreamWindow: boolean;
+  newStartTime?: Date;
+  newEndTime?: Date;
+  operation: ElasticOperation;
+  disruptionReason: string;
+}
+
+/**
+ * Identifies booked appointments genuinely affected by an Elastic SHRINK or EXPAND operation:
+ * - WAVE + SHRINK: active appointments in child subslots overlapping removedIntervals.
+ * - WAVE + EXPAND: existing child subslots retain their fixed [startTime, endTime]; only appointments
+ *   falling outside nextRange would be affected (standard Wave expand affects 0 existing bookings).
+ * - STREAM + SHRINK: active Stream appointments without fixed subslot times (or overlapping removedIntervals)
+ *   whose continuous window was shortened.
+ * - STREAM + EXPAND: active Stream appointments without fixed subslot times (slotStart == null || slotEnd == null)
+ *   whose effective consultation window [previousRange.startTime, previousRange.endTime] changed to nextRange.
+ */
+export function identifyAffectedElasticAppointments(params: {
+  operation: ElasticOperation;
+  scheduleType: "WAVE" | "STREAM";
+  previousRange: { startTime: Date; endTime: Date };
+  nextRange: { startTime: Date; endTime: Date };
+  removedIntervals?: Array<{ startTime: Date; endTime: Date }>;
+  appointments: ElasticAppointmentCandidate[];
+}): IdentifiedAffectedElasticAppointment[] {
+  const {
+    operation,
+    scheduleType,
+    previousRange,
+    nextRange,
+    removedIntervals = [],
+    appointments,
+  } = params;
+
+  const rangeChanged =
+    previousRange.startTime.getTime() !== nextRange.startTime.getTime() ||
+    previousRange.endTime.getTime() !== nextRange.endTime.getTime();
+
+  if (!rangeChanged) {
+    return [];
+  }
+
+  const affected: IdentifiedAffectedElasticAppointment[] = [];
+
+  for (const appt of appointments) {
+    if (!ELASTIC_ACTIVE_APPOINTMENT_STATUSES.has(appt.status)) {
+      continue;
+    }
+
+    if (scheduleType === "WAVE") {
+      const effectiveStart = appt.slotStart ?? appt.slotStartTime ?? previousRange.startTime;
+      const effectiveEnd = appt.slotEnd ?? appt.slotEndTime ?? previousRange.endTime;
+
+      const overlapsRemoved = removedIntervals.some(
+        (interval) =>
+          effectiveStart < interval.endTime && effectiveEnd > interval.startTime
+      );
+      const outsideNextRange =
+        effectiveStart < nextRange.startTime || effectiveEnd > nextRange.endTime;
+
+      if ((operation === "SHRINK" && (overlapsRemoved || outsideNextRange)) ||
+          (operation === "EXPAND" && outsideNextRange)) {
+        affected.push({
+          id: appt.id,
+          patientUserId: appt.patientUserId,
+          originalStartTime: effectiveStart,
+          originalEndTime: effectiveEnd,
+          isStreamWindow: false,
+          operation,
+          disruptionReason:
+            operation === "SHRINK"
+              ? "Doctor availability was reduced. Please select an alternative consultation time."
+              : "Doctor availability window was updated. Please select an alternative consultation time.",
+        });
+      }
+      continue;
+    }
+
+    // STREAM schedule
+    const hasFixedSubslot = Boolean(appt.slotStart && appt.slotEnd);
+    if (!hasFixedSubslot) {
+      affected.push({
+        id: appt.id,
+        patientUserId: appt.patientUserId,
+        originalStartTime: previousRange.startTime,
+        originalEndTime: previousRange.endTime,
+        isStreamWindow: true,
+        newStartTime: nextRange.startTime,
+        newEndTime: nextRange.endTime,
+        operation,
+        disruptionReason:
+          operation === "SHRINK"
+            ? "Doctor's continuous consultation window was shortened. Because Stream bookings do not have individual sub-slot times, your appointment was flagged in case the updated window hours no longer work for you. Your seat remains protected, or you may reschedule."
+            : "Doctor's continuous consultation window was expanded and updated. Because Stream bookings do not have individual sub-slot times, your appointment was flagged in case the updated window hours no longer work for you. Your seat remains protected, or you may reschedule.",
+      });
+    } else {
+      const overlapsRemoved = removedIntervals.some(
+        (interval) =>
+          appt.slotStart! < interval.endTime && appt.slotEnd! > interval.startTime
+      );
+      const outsideNextRange =
+        appt.slotStart! < nextRange.startTime || appt.slotEnd! > nextRange.endTime;
+      if (overlapsRemoved || outsideNextRange) {
+        affected.push({
+          id: appt.id,
+          patientUserId: appt.patientUserId,
+          originalStartTime: appt.slotStart!,
+          originalEndTime: appt.slotEnd!,
+          isStreamWindow: true,
+          newStartTime: nextRange.startTime,
+          newEndTime: nextRange.endTime,
+          operation,
+          disruptionReason:
+            operation === "SHRINK"
+              ? "Doctor's continuous consultation window was shortened. Please select an alternative consultation time."
+              : "Doctor's continuous consultation window was updated. Please select an alternative consultation time.",
+        });
+      }
+    }
+  }
+
+  return affected;
+}
+
+/**
+ * Generates a deterministic deduplication key for an Elastic Scheduling rescheduling notification
+ * so duplicate processing of the same schedule adjustment never sends duplicate emails.
+ */
+export function buildElasticRescheduleDedupeKey(params: {
+  appointmentId: string;
+  operation: ElasticOperation;
+  originalStartTime: Date | string;
+  originalEndTime: Date | string;
+  newStartTime?: Date | string | null;
+  newEndTime?: Date | string | null;
+}): string {
+  const origStart =
+    params.originalStartTime instanceof Date
+      ? params.originalStartTime.toISOString()
+      : new Date(params.originalStartTime).toISOString();
+  const origEnd =
+    params.originalEndTime instanceof Date
+      ? params.originalEndTime.toISOString()
+      : new Date(params.originalEndTime).toISOString();
+  const nextStart = params.newStartTime
+    ? params.newStartTime instanceof Date
+      ? params.newStartTime.toISOString()
+      : new Date(params.newStartTime).toISOString()
+    : "none";
+  const nextEnd = params.newEndTime
+    ? params.newEndTime instanceof Date
+      ? params.newEndTime.toISOString()
+      : new Date(params.newEndTime).toISOString()
+    : "none";
+
+  return `email:elastic_${params.operation.toLowerCase()}:${params.appointmentId}:${origStart}:${origEnd}:${nextStart}:${nextEnd}`;
+}
+
