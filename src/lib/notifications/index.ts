@@ -10,13 +10,15 @@ import {
   renderPaymentFailedHoldEmail,
   renderAppointmentReminderEmail,
   renderDoctorNewBookingEmail,
+  renderElasticShrinkRescheduleEmail,
 } from "@/lib/email/templates/index";
-import { effectiveSlot } from "@/lib/scheduling";
+import { effectiveSlot, type AlternativeSlotSuggestion } from "@/lib/scheduling";
 
 // Re-export in-app notification helpers
 export { createNotification, createManyNotifications } from "@/lib/notifications";
 
 export interface DeliveryPayload {
+  appointmentId?: string;
   doctorName?: string;
   specialization?: string;
   startTime?: string | Date;
@@ -35,6 +37,12 @@ export interface DeliveryPayload {
   oldEndTime?: string | Date;
   newStartTime?: string | Date;
   newEndTime?: string | Date;
+  originalStartTime?: string | Date;
+  originalEndTime?: string | Date;
+  isStreamWindow?: boolean;
+  sameDayAlternatives?: AlternativeSlotSuggestion[];
+  upcomingDateAlternatives?: AlternativeSlotSuggestion[];
+  otherDoctorAlternatives?: AlternativeSlotSuggestion[];
   status?: "PENDING" | "FAILED" | "REQUESTED" | "SUCCESS";
   providerRefundId?: string;
   failureReason?: string;
@@ -54,7 +62,8 @@ export interface EnqueueEmailParams {
     | "refund_status"
     | "payment_failed_hold"
     | "reminder"
-    | "doctor_new_booking";
+    | "doctor_new_booking"
+    | "elastic_shrink_reschedule";
   payload: Record<string, unknown>;
   dedupeKey: string;
   scheduledFor?: Date;
@@ -303,6 +312,32 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
           : appointmentSlot?.end
           ? new Date(appointmentSlot.end)
           : undefined,
+      });
+      break;
+
+    case "elastic_shrink_reschedule":
+      subject = "Action Required: Please Reschedule Your Appointment";
+      emailContent = renderElasticShrinkRescheduleEmail({
+        appointmentId: payload.appointmentId || delivery.appointmentId || "",
+        patientName: delivery.user.name || "Patient",
+        doctorName: payload.doctorName || "Practitioner",
+        specialization: payload.specialization,
+        originalStartTime: new Date(
+          payload.originalStartTime || payload.startTime || appointmentSlot?.start || Date.now()
+        ),
+        originalEndTime: payload.originalEndTime
+          ? new Date(payload.originalEndTime)
+          : payload.endTime
+          ? new Date(payload.endTime)
+          : appointmentSlot?.end
+          ? new Date(appointmentSlot.end)
+          : undefined,
+        isStreamWindow: Boolean(payload.isStreamWindow),
+        newStartTime: payload.newStartTime ? new Date(payload.newStartTime) : undefined,
+        newEndTime: payload.newEndTime ? new Date(payload.newEndTime) : undefined,
+        sameDayAlternatives: payload.sameDayAlternatives ?? [],
+        upcomingDateAlternatives: payload.upcomingDateAlternatives ?? [],
+        otherDoctorAlternatives: payload.otherDoctorAlternatives ?? [],
       });
       break;
 

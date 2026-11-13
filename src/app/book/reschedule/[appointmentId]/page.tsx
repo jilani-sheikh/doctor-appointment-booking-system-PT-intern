@@ -3,12 +3,13 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { Role, SlotStatus } from "@/generated/prisma/client";
+import { AvailabilityKind, Role, SlotStatus } from "@/generated/prisma/client";
 import { MAX_RESCHEDULE_COUNT } from "@/lib/appointment-status";
 import { toPublicSlotDto, type SerializedPublicSlot } from "@/lib/serializers";
 import { RescheduleView } from "./reschedule-view";
 import { RotateCcw, ArrowLeft } from "lucide-react";
 import { effectiveSlot } from "@/lib/scheduling";
+import { discoverAlternativeAppointmentsForPatient } from "@/lib/actions/reschedule";
 
 export const metadata: Metadata = {
   title: "Reschedule Consultation — Medrella",
@@ -50,22 +51,44 @@ export default async function ReschedulePage({
   const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
   const fourteenDaysFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 
-  // Fetch doctor's other available slots in the next 14 days
-  const rawSlots = await db.availability.findMany({
-    where: {
-      doctorId: doctor.id,
-      id: { not: appointment.availabilityId },
-      status: SlotStatus.AVAILABLE,
-      activeCount: { lt: 1 },
-      kind: { not: "WAVE_PARENT" },
-      startTime: { gt: oneHourFromNow, lte: fourteenDaysFromNow },
-    },
-    orderBy: { startTime: "asc" },
-  });
+  const compatibleKinds =
+    appointment.availability.kind === AvailabilityKind.STREAM_WINDOW
+      ? [AvailabilityKind.STREAM_WINDOW]
+      : [AvailabilityKind.SINGLE, AvailabilityKind.WAVE_SLOT];
 
-  // Group slots by IST date label
+  // Fetch doctor's other available compatible slots in the next 14 days and three-level suggestions
+  const [rawSlots, suggestedAlternatives] = await Promise.all([
+    db.availability.findMany({
+      where: {
+        doctorId: doctor.id,
+        id: { not: appointment.availabilityId },
+        status: SlotStatus.AVAILABLE,
+        blockedByTimeOffId: null,
+        kind: { in: compatibleKinds },
+        startTime: { gt: oneHourFromNow, lte: fourteenDaysFromNow },
+      },
+      include: {
+        parent: { select: { startTime: true, endTime: true, status: true } },
+      },
+      orderBy: { startTime: "asc" },
+    }),
+    discoverAlternativeAppointmentsForPatient(appointment.id, now),
+  ]);
+
+  // Group eligible slots by IST date label
   const slotsGrouped: Record<string, SerializedPublicSlot[]> = {};
   for (const s of rawSlots) {
+    if (s.activeCount >= s.capacity) continue;
+    if (
+      s.kind === AvailabilityKind.WAVE_SLOT &&
+      s.parent &&
+      (s.startTime < s.parent.startTime ||
+        s.endTime > s.parent.endTime ||
+        s.parent.status === SlotStatus.BLOCKED)
+    ) {
+      continue;
+    }
+
     const dateLabel = new Intl.DateTimeFormat("en-IN", {
       timeZone: "Asia/Kolkata",
       weekday: "short",
@@ -108,8 +131,12 @@ export default async function ReschedulePage({
         currentSlotEnd={currentAppointmentSlot.end.toISOString()}
         rescheduleCount={appointment.rescheduleCount}
         maxRescheduleCount={MAX_RESCHEDULE_COUNT}
-        isDisrupted={Boolean(appointment.disruptedAt)}
+        isDisrupted={
+          Boolean(appointment.disruptedAt) ||
+          appointment.rescheduleStatus === "PENDING_RESCHEDULING"
+        }
         disruptionReason={appointment.disruptionReason}
+        suggestedAlternatives={suggestedAlternatives}
         slotsGrouped={slotsGrouped}
       />
     </div>
