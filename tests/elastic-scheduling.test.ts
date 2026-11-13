@@ -1,15 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildElasticRescheduleDedupeKey,
   calculateElasticRange,
   diffAvailabilityIntervals,
   generateScheduleAvailabilities,
   getVisibleAlternativeCategories,
+  identifyAffectedElasticAppointments,
   isCrossDoctorPaymentCompatible,
   isEligibleForDisruptedDashboardAlternatives,
   selectThreeLevelAlternatives,
   type AlternativeSlotCandidate,
 } from "../src/lib/scheduling";
+import {
+  getElasticSchedulingTestEmail,
+  resolveNotificationEmailRecipient,
+} from "../src/lib/env";
 import { toPatientAppointmentDto } from "../src/lib/serializers";
 import { renderElasticShrinkRescheduleEmail } from "../src/lib/email/templates/index";
 import { canPatientReschedule } from "../src/lib/appointment-status";
@@ -801,5 +807,214 @@ test("Patient Dashboard Disrupted Alternatives: eligibility, priority order, emp
   assert.equal(dto.suggestedAlternatives?.sameDayAlternatives.length, 1);
   assert.equal(dto.canReschedule, true);
 });
+
+test("Elastic Scheduling Test Email Notifications (Shrink + Expand): recipient override, missing env safety, in-app preservation, unaffected filtering, and deduplication", () => {
+  const prevTestEmail = process.env.ELASTIC_SCHEDULING_TEST_EMAIL;
+
+  try {
+    // 1. Shrink-triggered rescheduling emails use jilani1608@gmail.com when configured
+    process.env.ELASTIC_SCHEDULING_TEST_EMAIL = "jilani1608@gmail.com";
+    assert.equal(getElasticSchedulingTestEmail(), "jilani1608@gmail.com");
+
+    const shrinkRecipient = resolveNotificationEmailRecipient(
+      "elastic_shrink_reschedule",
+      "actual.patient@example.com"
+    );
+    assert.equal(shrinkRecipient.recipient, "jilani1608@gmail.com");
+    assert.equal(shrinkRecipient.skipReason, undefined);
+
+    // 2. Expand-triggered emails use the same recipient when a booked appointment is genuinely affected (e.g. Stream window expansion)
+    const streamPrevious = {
+      startTime: new Date("2026-11-15T04:30:00.000Z"), // 10:00 IST
+      endTime: new Date("2026-11-15T06:30:00.000Z"),   // 12:00 IST
+    };
+    const streamExpanded = calculateElasticRange(
+      streamPrevious,
+      "START",
+      1,
+      30,
+      "EXPAND"
+    ); // 09:30 - 12:00 IST
+
+    const affectedOnStreamExpand = identifyAffectedElasticAppointments({
+      operation: "EXPAND",
+      scheduleType: "STREAM",
+      previousRange: streamPrevious,
+      nextRange: streamExpanded,
+      appointments: [
+        {
+          id: "appt-stream-expand-1",
+          patientUserId: "patient-user-99",
+          status: AppointmentStatus.CONFIRMED,
+          slotStart: null,
+          slotEnd: null,
+        },
+      ],
+    });
+    assert.equal(affectedOnStreamExpand.length, 1);
+    assert.equal(affectedOnStreamExpand[0]!.id, "appt-stream-expand-1");
+    assert.equal(affectedOnStreamExpand[0]!.operation, "EXPAND");
+    assert.equal(affectedOnStreamExpand[0]!.isStreamWindow, true);
+    assert.equal(affectedOnStreamExpand[0]!.patientUserId, "patient-user-99");
+
+    const expandRecipient = resolveNotificationEmailRecipient(
+      "elastic_shrink_reschedule",
+      "another.patient@example.com"
+    );
+    assert.equal(expandRecipient.recipient, "jilani1608@gmail.com");
+
+    const expandEmailRendered = renderElasticShrinkRescheduleEmail({
+      appointmentId: affectedOnStreamExpand[0]!.id,
+      patientName: "Aarav Mehta",
+      doctorName: "Asha Rao",
+      specialization: "Cardiology",
+      originalStartTime: affectedOnStreamExpand[0]!.originalStartTime,
+      originalEndTime: affectedOnStreamExpand[0]!.originalEndTime,
+      isStreamWindow: true,
+      newStartTime: affectedOnStreamExpand[0]!.newStartTime,
+      newEndTime: affectedOnStreamExpand[0]!.newEndTime,
+      operation: "EXPAND",
+      disruptionReason: affectedOnStreamExpand[0]!.disruptionReason,
+      sameDayAlternatives: [],
+      upcomingDateAlternatives: [],
+      otherDoctorAlternatives: [],
+    });
+    assert.equal(expandEmailRendered.html.includes("Aarav Mehta"), true);
+    assert.equal(expandEmailRendered.html.includes("expanded and updated"), true);
+    assert.equal(expandEmailRendered.html.includes("Reason:"), true);
+    assert.equal(expandEmailRendered.html.includes("/book/reschedule/appt-stream-expand-1"), true);
+
+    // 3. In-app notifications still target the actual patient (patientUserId is preserved on affected records)
+    const wavePrevious = {
+      startTime: new Date("2026-11-15T03:30:00.000Z"), // 09:00 IST
+      endTime: new Date("2026-11-15T05:30:00.000Z"),   // 11:00 IST
+    };
+    const waveShrunk = calculateElasticRange(wavePrevious, "END", 1, 30, "SHRINK"); // 09:00 - 10:30 IST
+    const waveDiff = diffAvailabilityIntervals(wavePrevious, waveShrunk, 30);
+
+    const affectedOnWaveShrink = identifyAffectedElasticAppointments({
+      operation: "SHRINK",
+      scheduleType: "WAVE",
+      previousRange: wavePrevious,
+      nextRange: waveShrunk,
+      removedIntervals: waveDiff.removed,
+      appointments: [
+        {
+          id: "appt-wave-affected",
+          patientUserId: "real-patient-user-id-1",
+          status: AppointmentStatus.CONFIRMED,
+          slotStartTime: new Date("2026-11-15T05:00:00.000Z"), // 10:30 - 11:00 IST (removed)
+          slotEndTime: new Date("2026-11-15T05:30:00.000Z"),
+        },
+        {
+          id: "appt-wave-retained",
+          patientUserId: "real-patient-user-id-2",
+          status: AppointmentStatus.CONFIRMED,
+          slotStartTime: new Date("2026-11-15T03:30:00.000Z"), // 09:00 - 09:30 IST (retained)
+          slotEndTime: new Date("2026-11-15T04:00:00.000Z"),
+        },
+      ],
+    });
+    assert.equal(affectedOnWaveShrink.length, 1);
+    assert.equal(affectedOnWaveShrink[0]!.id, "appt-wave-affected");
+    assert.equal(affectedOnWaveShrink[0]!.patientUserId, "real-patient-user-id-1");
+
+    // 4. Other email types retain their existing recipients (never overridden to jilani1608@gmail.com)
+    for (const otherTemplate of [
+      "booking_confirmed",
+      "payment_receipt",
+      "appointment_cancelled",
+      "appointment_rescheduled",
+      "refund_status",
+      "payment_failed_hold",
+      "reminder",
+      "doctor_new_booking",
+    ]) {
+      const resolved = resolveNotificationEmailRecipient(
+        otherTemplate,
+        "patient.real@example.com"
+      );
+      assert.equal(resolved.recipient, "patient.real@example.com");
+    }
+
+    // 5. Missing or invalid test-email configuration never falls back to the patient's registered email
+    delete process.env.ELASTIC_SCHEDULING_TEST_EMAIL;
+    assert.equal(getElasticSchedulingTestEmail(), null);
+    const missingEnvResolution = resolveNotificationEmailRecipient(
+      "elastic_shrink_reschedule",
+      "patient.real@example.com"
+    );
+    assert.equal(missingEnvResolution.recipient, null);
+    assert.equal(
+      missingEnvResolution.skipReason?.includes("ELASTIC_SCHEDULING_TEST_EMAIL"),
+      true
+    );
+
+    process.env.ELASTIC_SCHEDULING_TEST_EMAIL = "not-an-email";
+    const invalidEnvResolution = resolveNotificationEmailRecipient(
+      "elastic_shrink_reschedule",
+      "patient.real@example.com"
+    );
+    assert.equal(invalidEnvResolution.recipient, null);
+
+    // 6. Unaffected appointments do not trigger rescheduling emails (Wave expand and cancelled appointments)
+    const waveExpanded = calculateElasticRange(wavePrevious, "END", 1, 30, "EXPAND");
+    const unaffectedWaveExpand = identifyAffectedElasticAppointments({
+      operation: "EXPAND",
+      scheduleType: "WAVE",
+      previousRange: wavePrevious,
+      nextRange: waveExpanded,
+      appointments: [
+        {
+          id: "appt-wave-retained",
+          patientUserId: "real-patient-user-id-2",
+          status: AppointmentStatus.CONFIRMED,
+          slotStartTime: new Date("2026-11-15T03:30:00.000Z"),
+          slotEndTime: new Date("2026-11-15T04:00:00.000Z"),
+        },
+        {
+          id: "appt-cancelled",
+          patientUserId: "real-patient-user-id-3",
+          status: AppointmentStatus.CANCELLED,
+          slotStartTime: new Date("2026-11-15T05:00:00.000Z"),
+          slotEndTime: new Date("2026-11-15T05:30:00.000Z"),
+        },
+      ],
+    });
+    assert.equal(unaffectedWaveExpand.length, 0);
+
+    // 7. Duplicate processing produces identical dedupeKey to prevent duplicate notifications
+    const key1 = buildElasticRescheduleDedupeKey({
+      appointmentId: "appt-wave-affected",
+      operation: "SHRINK",
+      originalStartTime: new Date("2026-11-15T05:00:00.000Z"),
+      originalEndTime: new Date("2026-11-15T05:30:00.000Z"),
+    });
+    const key2 = buildElasticRescheduleDedupeKey({
+      appointmentId: "appt-wave-affected",
+      operation: "SHRINK",
+      originalStartTime: "2026-11-15T05:00:00.000Z",
+      originalEndTime: "2026-11-15T05:30:00.000Z",
+    });
+    assert.equal(key1, key2);
+
+    const expandKey = buildElasticRescheduleDedupeKey({
+      appointmentId: "appt-stream-expand-1",
+      operation: "EXPAND",
+      originalStartTime: streamPrevious.startTime,
+      originalEndTime: streamPrevious.endTime,
+      newStartTime: streamExpanded.startTime,
+      newEndTime: streamExpanded.endTime,
+    });
+    assert.notEqual(key1, expandKey);
+  } finally {
+    if (prevTestEmail === undefined) {
+      delete process.env.ELASTIC_SCHEDULING_TEST_EMAIL;
+    } else {
+      process.env.ELASTIC_SCHEDULING_TEST_EMAIL = prevTestEmail;
+    }
+  }
+});
+
 
 

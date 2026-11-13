@@ -57,6 +57,7 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
+  ELASTIC_SCHEDULING_TEST_EMAIL: z.string().email().optional(),
   CRON_SECRET: z.string().optional(),
   REMINDER_OFFSETS_MINUTES: z.string().optional(),
 });
@@ -289,6 +290,57 @@ export function getResendFromEmail(): string {
     process.env.EMAIL_FROM?.trim() ||
     "onboarding@resend.dev"
   );
+}
+
+/**
+ * Retrieves the dedicated test email recipient for Elastic Scheduling rescheduling notifications.
+ * Returns null if ELASTIC_SCHEDULING_TEST_EMAIL is missing or invalid so callers never fall back
+ * to the patient's registered email address.
+ */
+export function getElasticSchedulingTestEmail(): string | null {
+  const raw = process.env.ELASTIC_SCHEDULING_TEST_EMAIL?.trim();
+  if (!raw) {
+    return null;
+  }
+  const parsed = z.string().email().safeParse(raw);
+  if (!parsed.success) {
+    console.warn("[Medrella Config Warning] Invalid ELASTIC_SCHEDULING_TEST_EMAIL format; skipping test email override.");
+    return null;
+  }
+  return parsed.data;
+}
+
+/**
+ * Resolves the email recipient for an outbox notification template.
+ * - For "elastic_shrink_reschedule", strictly uses ELASTIC_SCHEDULING_TEST_EMAIL and never falls back
+ *   to the patient's registered email address if missing or invalid.
+ * - For all other templates, uses the recipient user's registered email address.
+ */
+export function resolveNotificationEmailRecipient(
+  template: string,
+  userEmail?: string | null
+): { recipient: string | null; skipReason?: string } {
+  if (template === "elastic_shrink_reschedule") {
+    const testRecipient = getElasticSchedulingTestEmail();
+    if (!testRecipient) {
+      return {
+        recipient: null,
+        skipReason:
+          "Missing or invalid ELASTIC_SCHEDULING_TEST_EMAIL; skipped to avoid sending to patient's registered email",
+      };
+    }
+    return { recipient: testRecipient };
+  }
+
+  const normalizedUserEmail = userEmail?.trim();
+  if (!normalizedUserEmail) {
+    return {
+      recipient: null,
+      skipReason: "User has no email address",
+    };
+  }
+
+  return { recipient: normalizedUserEmail };
 }
 
 /**

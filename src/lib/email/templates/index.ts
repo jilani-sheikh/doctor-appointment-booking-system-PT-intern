@@ -417,7 +417,7 @@ export function renderDoctorNewBookingEmail(params: {
   });
 }
 
-// 9. Elastic Shrink Reschedule Notice with Three-Level Alternatives
+// 9. Elastic Shrink / Expand Reschedule Notice with Three-Level Alternatives
 export function renderElasticShrinkRescheduleEmail(params: {
   appointmentId: string;
   patientName: string;
@@ -428,6 +428,8 @@ export function renderElasticShrinkRescheduleEmail(params: {
   isStreamWindow?: boolean;
   newStartTime?: Date;
   newEndTime?: Date;
+  operation?: "SHRINK" | "EXPAND";
+  disruptionReason?: string;
   sameDayAlternatives?: AlternativeSlotSuggestion[];
   upcomingDateAlternatives?: AlternativeSlotSuggestion[];
   otherDoctorAlternatives?: AlternativeSlotSuggestion[];
@@ -506,14 +508,23 @@ export function renderElasticShrinkRescheduleEmail(params: {
     `;
   }
 
+  const streamChangeVerb =
+    params.operation === "EXPAND" ? "expanded and updated" : "shortened";
+
   const introParagraph = params.isStreamWindow
-    ? `<p>Your doctor has shortened their continuous consultation window. Because Stream consultations do not have fixed individual sub-slot times, all bookings in this window were flagged in case the updated hours no longer work for you. Your seat in the updated window remains protected, or you may reschedule to an alternative window.</p>`
-    : `<p>Your doctor has recently updated their availability, and unfortunately, your existing appointment needs to be rescheduled.</p>`;
+    ? `<p>Your doctor has ${streamChangeVerb} their continuous consultation window. Because Stream consultations do not have fixed individual sub-slot times, all bookings in this window were flagged in case the updated hours no longer work for you. Your seat in the updated window remains protected, or you may reschedule to an alternative window.</p>`
+    : `<p>Your doctor has recently updated their availability, and unfortunately, your existing appointment is affected and needs to be rescheduled. Please select a new consultation slot below.</p>`;
 
   const updatedWindowItem =
     params.isStreamWindow && updatedWindowTime
       ? `<li><strong>Updated Window:</strong> ${escapeHtml(updatedWindowTime)}</li>`
       : "";
+
+  const reasonText =
+    params.disruptionReason ||
+    (params.isStreamWindow
+      ? `Doctor's continuous consultation window was ${streamChangeVerb}.`
+      : "Doctor availability was updated.");
 
   const content = `
     <p>Hello ${escapeHtml(params.patientName)},</p>
@@ -521,10 +532,12 @@ export function renderElasticShrinkRescheduleEmail(params: {
     <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0;">
       <p style="margin: 0 0 8px 0; font-weight: 700; color: #0f172a; font-size: 14px;">Your Current Appointment</p>
       <ul style="margin: 0; padding-left: 18px; font-size: 14px; color: #334155;">
+        <li><strong>Patient:</strong> ${escapeHtml(params.patientName)}</li>
         <li><strong>Doctor:</strong> Dr. ${escapeHtml(params.doctorName)}${params.specialization ? ` (${escapeHtml(params.specialization)})` : ""}</li>
         <li><strong>Date:</strong> ${escapeHtml(originalDate)}</li>
         <li><strong>${params.isStreamWindow ? "Original Window" : "Time"}:</strong> ${escapeHtml(originalTime)}</li>
         ${updatedWindowItem}
+        <li><strong>Reason:</strong> ${escapeHtml(reasonText)}</li>
       </ul>
     </div>
     ${alternativesHtml}
