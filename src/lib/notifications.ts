@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { NotificationType, type Notification } from "@/generated/prisma/client";
 import { calculateQueueEstimates, type QueueAppointmentItem } from "@/lib/queue";
 import { getTodayISTDateString, getISTDateString } from "@/lib/time";
+import { effectiveSlot } from "@/lib/scheduling";
 
 export interface CreateNotificationInput {
   userId: string;
@@ -79,14 +80,14 @@ export async function checkAndNotifyQueueDelay(doctorId: string): Promise<number
 
     // Filter appointments for today IST
     const todayAppts = rawAppointments.filter(
-      (a) => getISTDateString(a.availability.startTime) === todayIST
+      (a) => getISTDateString(effectiveSlot(a).start) === todayIST
     );
 
     const queueItems: QueueAppointmentItem[] = todayAppts.map((a) => ({
       id: a.id,
       status: a.status,
-      scheduledStart: a.availability.startTime,
-      scheduledEnd: a.availability.endTime,
+      scheduledStart: effectiveSlot(a).start,
+      scheduledEnd: effectiveSlot(a).end,
       actualStartAt: a.actualStartAt,
       actualEndAt: a.actualEndAt,
       checkedInAt: a.checkedInAt,

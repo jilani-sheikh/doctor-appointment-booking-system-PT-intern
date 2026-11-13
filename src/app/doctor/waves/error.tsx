@@ -23,10 +23,10 @@ export default function DoctorWavesError({
         </div>
       </div>
       <h2 className="text-xl font-bold tracking-tight text-foreground">
-        Failed to load wave scheduling
+        Failed to load arrival-window scheduling
       </h2>
       <p className="text-sm text-muted-foreground max-w-md mx-auto">
-        An error occurred while loading your wave schedules. Please try again or check back later.
+        An error occurred while loading your arrival-window schedules. Please try again or check back later.
       </p>
       <div className="pt-2">
         <Button onClick={() => reset()} variant="default" size="sm" className="gap-2">

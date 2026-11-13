@@ -28,6 +28,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **Abuse Guard Enforcement:** `bookAppointmentAction` server-side strictly limits patients to at most 3 active upcoming consultations (`CONFIRMED`/`CHECKED_IN` with slot in future) and at most 1 active consultation per doctor per day (IST). Constants reside in `src/lib/constants.ts`.
 - **Role & Scope Boundaries:** There is no receptionist role. Outpatient consultations auto-confirm directly.
 
+### Wave and Stream Scheduling
+- `AvailabilitySchedule` stores IST calendar rules; generated rows use `WAVE_PARENT`, `WAVE_SLOT`, or `STREAM_WINDOW` kinds.
+- Capacity is enforced by atomic `activeCount` claim/release helpers. Payment holds count as active seats.
+- Stream appointments store `slotStart` and `slotEnd`; consumers should use `effectiveSlot` rather than reading availability times directly.
+- In the doctor slot generator, `WAVE` is displayed as **Wave** and `ONCE` as **Non-recurring**. A Non-recurring schedule overrides only the matching date of an active Recurring schedule; active bookings require explicit cancellation/refund confirmation before the recurring rows are blocked.
+- Apply `20261104180000_add_wave_stream_scheduling` before `20261104180100_wave_stream_capacity_constraints`; the second migration intentionally removes the legacy single-seat appointment indexes.
+
 ### Payments, Refunds & Notification Architecture
 - **Payment Provider Abstraction:** Payment operations must go through `PaymentProvider` interface in `src/lib/payments/types.ts` via `getPaymentProvider()`. Default implementation is `CashfreeProvider` with `FakePaymentProvider` fallback for testing.
 - **Rollout Modes:** Controlled by `PAYMENTS_MODE` env var: `"disabled"` (free booking bypass), `"cashfree"` (live Cashfree checkout). Free consultations (`consultationFee <= 0`) always bypass payment.

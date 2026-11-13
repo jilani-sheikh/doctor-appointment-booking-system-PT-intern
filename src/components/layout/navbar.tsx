@@ -103,11 +103,11 @@ export function Navbar({
                 <span>Queue</span>
               </Link>
               <Link
-                href="/doctor/waves"
+                href="/doctor/arrival-windows"
                 className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors flex items-center gap-1"
               >
                 <Waves className="h-3.5 w-3.5" />
-                <span>Waves</span>
+                <span>                <span>Arrival Windows</span></span>
               </Link>
               <Link
                 href="/doctor/time-off"
@@ -214,11 +214,11 @@ export function Navbar({
                         <span>Live Queue</span>
                       </Link>
                       <Link
-                        href="/doctor/waves"
+                        href="/doctor/arrival-windows"
                         className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors flex items-center gap-2"
                       >
                         <Waves className="h-4 w-4" />
-                        <span>Waves</span>
+                        <span>Arrival Windows</span>
                       </Link>
                       <Link
                         href="/doctor/time-off"

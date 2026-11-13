@@ -54,3 +54,17 @@ export type BulkSlotInput = z.infer<typeof bulkSlotSchema>;
 // Aliases for compatibility
 export const slotGenerationSchema = bulkSlotSchema;
 export type SlotGenerationInput = BulkSlotInput;
+
+export const scheduleSchema = z.object({
+  type: z.enum(["WAVE", "STREAM"]),
+  recurrence: z.enum(["ONCE", "RECURRING"]),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Start date must be in YYYY-MM-DD format"),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "End date must be in YYYY-MM-DD format"),
+  daysOfWeek: z.array(z.number().int().min(0).max(6)),
+  startMinute: z.number().int().min(0).max(1439),
+  endMinute: z.number().int().min(1).max(1440),
+  durationMinutes: z.number().int().positive(),
+  capacity: z.number().int().positive(),
+});
+
+export type ScheduleInput = z.infer<typeof scheduleSchema>;

@@ -16,6 +16,7 @@ import {
 import { enqueuePatientNotifications } from "@/lib/notifications/index";
 import { syncAppointmentReminders } from "@/lib/notifications/reminders";
 import { revalidatePath } from "next/cache";
+import { effectiveSlot } from "@/lib/scheduling";
 
 /**
  * Reschedules an appointment to a new available slot with the same doctor.
@@ -59,11 +60,12 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
   if (!appointment || appointment.patientId !== user.patient.id) {
     return { success: false, error: "Appointment not found or unauthorized." };
   }
+  const oldAppointmentSlot = effectiveSlot(appointment);
 
   const rescheduleEval = canPatientReschedule(
     {
       status: appointment.status,
-      startTime: appointment.availability.startTime,
+      startTime: oldAppointmentSlot.start,
       rescheduleCount: appointment.rescheduleCount,
       disruptedAt: appointment.disruptedAt,
     },
@@ -157,8 +159,8 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
       template: "appointment_rescheduled",
       payload: {
         doctorName,
-        oldStartTime: appointment.availability.startTime.toISOString(),
-        oldEndTime: appointment.availability.endTime.toISOString(),
+        oldStartTime: oldAppointmentSlot.start.toISOString(),
+        oldEndTime: oldAppointmentSlot.end.toISOString(),
         newStartTime: newSlot.startTime.toISOString(),
         newEndTime: newSlot.endTime.toISOString(),
       },
@@ -184,7 +186,7 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/dashboard");
     revalidatePath("/doctor/queue");
-    revalidatePath("/doctor/waves");
+    revalidatePath("/doctor/arrival-windows");
     revalidatePath(`/doctors/${doctorId}`);
 
     return {

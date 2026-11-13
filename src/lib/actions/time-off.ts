@@ -13,6 +13,7 @@ import {
   type DeleteDoctorTimeOffInput,
 } from "@/lib/validations/time-off";
 import { revalidatePath } from "next/cache";
+import { effectiveSlot } from "@/lib/scheduling";
 
 /**
  * Creates a doctor absence record and applies cascading schedule disruption.
@@ -82,7 +83,7 @@ export async function createDoctorTimeOffAction(input: DoctorTimeOffInput) {
       },
       include: {
         patient: { select: { userId: true } },
-        availability: { select: { startTime: true } },
+        availability: { select: { startTime: true, endTime: true } },
       },
     });
 
@@ -106,7 +107,7 @@ export async function createDoctorTimeOffAction(input: DoctorTimeOffInput) {
           type: NotificationType.DOCTOR_ABSENCE,
           title: "Doctor Unavailable — Schedule Disruption",
           body: `Dr. ${doctorName} is unavailable during your scheduled consultation on ${formatDateTimeIST(
-            appt.availability.startTime
+            effectiveSlot(appt).start
           )}. Please reschedule your appointment.`,
           href: "/patient/appointments",
         }))

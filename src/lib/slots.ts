@@ -37,6 +37,8 @@ export async function releaseSlot(
       doctorId: true,
       startTime: true,
       endTime: true,
+      capacity: true,
+      activeCount: true,
     },
   });
 
@@ -55,13 +57,13 @@ export async function releaseSlot(
 
   if (overlappingTimeOff) {
     // Slot remains or becomes BLOCKED due to active doctor absence
-    await client.availability.update({
-      where: { id: availabilityId },
-      data: {
-        status: SlotStatus.BLOCKED,
-        blockedByTimeOffId: overlappingTimeOff.id,
-      },
-    });
+    await client.$executeRaw`
+      UPDATE "availabilities"
+      SET "active_count" = GREATEST("active_count" - 1, 0),
+          "status" = 'BLOCKED'::"SlotStatus",
+          "blocked_by_time_off_id" = ${overlappingTimeOff.id}
+      WHERE "id" = ${availabilityId}
+    `;
 
     return {
       availabilityId: slot.id,
@@ -74,14 +76,16 @@ export async function releaseSlot(
     };
   }
 
-  // Slot successfully returns to AVAILABLE
-  await client.availability.update({
-    where: { id: availabilityId },
-    data: {
-      status: SlotStatus.AVAILABLE,
-      blockedByTimeOffId: null,
-    },
-  });
+  const updated = await client.$executeRaw`
+    UPDATE "availabilities"
+    SET "active_count" = GREATEST("active_count" - 1, 0),
+        "status" = CASE
+          WHEN GREATEST("active_count" - 1, 0) < "capacity" THEN 'AVAILABLE'::"SlotStatus"
+          ELSE "status"
+        END,
+        "blocked_by_time_off_id" = NULL
+    WHERE "id" = ${availabilityId}
+  `;
 
   return {
     availabilityId: slot.id,
@@ -89,7 +93,7 @@ export async function releaseSlot(
     startTime: slot.startTime,
     endTime: slot.endTime,
     newStatus: SlotStatus.AVAILABLE,
-    newlyAvailable: true,
+    newlyAvailable: updated > 0 && slot.activeCount >= slot.capacity,
     blockedByTimeOffId: null,
   };
 }

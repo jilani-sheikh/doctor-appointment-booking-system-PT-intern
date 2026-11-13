@@ -16,6 +16,7 @@ import {
 import { checkAndNotifyQueueDelay } from "@/lib/notifications";
 import { syncAppointmentReminders } from "@/lib/notifications/reminders";
 import { revalidatePath } from "next/cache";
+import { effectiveSlot } from "@/lib/scheduling";
 
 /**
  * Patient self-check-in for their own confirmed appointment.
@@ -39,8 +40,8 @@ export async function patientCheckInAction(appointmentId: string) {
 
   const checkInEval = canPatientCheckIn({
     status: appointment.status,
-    startTime: appointment.availability.startTime,
-    endTime: appointment.availability.endTime,
+    startTime: effectiveSlot(appointment).start,
+    endTime: effectiveSlot(appointment).end,
   });
 
   if (!checkInEval.allowed) {
@@ -69,7 +70,7 @@ export async function patientCheckInAction(appointmentId: string) {
     await syncAppointmentReminders(db, {
       appointmentId,
       userId: user.id,
-      slotStartTime: appointment.availability.startTime,
+      slotStartTime: effectiveSlot(appointment).start,
       status: AppointmentStatus.CHECKED_IN,
     });
 
@@ -302,7 +303,7 @@ export async function doctorNoShowAction(appointmentId: string) {
 
   const noShowEval = canDoctorNoShow({
     status: appointment.status,
-    startTime: appointment.availability.startTime,
+    startTime: effectiveSlot(appointment).start,
   });
 
   if (!noShowEval.allowed) {
@@ -362,7 +363,7 @@ export async function setPriorityStreamAction(appointmentId: string) {
 
     revalidatePath("/doctor/queue");
     revalidatePath("/doctor/appointments");
-    revalidatePath("/doctor/waves");
+    revalidatePath("/doctor/arrival-windows");
 
     return { success: true, message: "Appointment stream updated to Priority." };
   } catch (error) {

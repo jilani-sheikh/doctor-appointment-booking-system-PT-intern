@@ -25,6 +25,28 @@ enum SlotStatus {
   BLOCKED
 }
 
+enum ScheduleType {
+  WAVE
+  STREAM
+}
+
+enum Recurrence {
+  ONCE
+  RECURRING
+}
+
+enum ScheduleStatus {
+  ACTIVE
+  CANCELLED
+}
+
+enum AvailabilityKind {
+  SINGLE
+  WAVE_PARENT
+  WAVE_SLOT
+  STREAM_WINDOW
+}
+
 enum AppointmentStatus {
   PENDING
   PENDING_PAYMENT
@@ -215,11 +237,53 @@ model Doctor {
 
   user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   availabilities  Availability[]
+  availabilitySchedules AvailabilitySchedule[]
+  availabilityExceptions AvailabilityException[]
   timeOffs        DoctorTimeOff[]
   waves           Wave[]
   waitlistEntries WaitlistEntry[]
 
   @@map("doctors")
+}
+
+model AvailabilitySchedule {
+  id              String         @id @default(cuid())
+  doctorId        String         @map("doctor_id")
+  type            ScheduleType
+  recurrence      Recurrence
+  startDate       String         @map("start_date")
+  endDate         String         @map("end_date")
+  daysOfWeek      Int[]          @map("days_of_week")
+  startMinute     Int            @map("start_minute")
+  endMinute       Int            @map("end_minute")
+  durationMinutes Int            @map("duration_minutes")
+  capacity        Int
+  status          ScheduleStatus @default(ACTIVE)
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  doctor      Doctor                @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  availabilities Availability[]
+  exceptions  AvailabilityException[]
+
+  @@index([doctorId, status])
+  @@map("availability_schedules")
+}
+
+model AvailabilityException {
+  id         String   @id @default(cuid())
+  doctorId   String   @map("doctor_id")
+  scheduleId String?  @map("schedule_id")
+  date       String
+  reason     String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  doctor   Doctor                @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  schedule AvailabilitySchedule? @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  availabilities Availability[]
+
+  @@unique([scheduleId, date])
+  @@index([doctorId, date])
+  @@map("availability_exceptions")
 }
 
 model Availability {
@@ -228,15 +292,25 @@ model Availability {
   startTime           DateTime   @map("start_time")
   endTime             DateTime   @map("end_time")
   status              SlotStatus @default(AVAILABLE)
+  kind                AvailabilityKind @default(SINGLE)
+  capacity            Int        @default(1)
+  activeCount         Int        @default(0) @map("active_count")
+  scheduleId          String?    @map("schedule_id")
+  parentId            String?    @map("parent_id")
+  exceptionId         String?    @map("exception_id")
   blockedByTimeOffId  String?    @map("blocked_by_time_off_id")
   createdAt           DateTime   @default(now()) @map("created_at")
 
   doctor                  Doctor         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  schedule                AvailabilitySchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  parent                  Availability? @relation("AvailabilityChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children                Availability[] @relation("AvailabilityChildren")
+  exception               AvailabilityException? @relation(fields: [exceptionId], references: [id], onDelete: SetNull)
   blockedByTimeOff        DoctorTimeOff? @relation(fields: [blockedByTimeOffId], references: [id], onDelete: SetNull)
   appointments            Appointment[]
   rescheduledAppointments Appointment[]  @relation("RescheduledFromAvailability")
 
-  @@unique([doctorId, startTime])
+  @@unique([doctorId, startTime, kind])
   @@index([doctorId, startTime])
   @@index([blockedByTimeOffId])
   @@map("availabilities")
@@ -262,6 +336,8 @@ model Appointment {
   cancellationReason            String?           @map("cancellation_reason") @db.Text
   cancelledBy                   String?           @map("cancelled_by")
   holdExpiresAt                 DateTime?         @map("hold_expires_at")
+  slotStart                     DateTime?         @map("slot_start")
+  slotEnd                       DateTime?         @map("slot_end")
   createdAt                     DateTime          @default(now()) @map("created_at")
   updatedAt                     DateTime          @updatedAt @map("updated_at")
   cancelledAt                   DateTime?         @map("cancelled_at")

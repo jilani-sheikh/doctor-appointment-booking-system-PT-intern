@@ -4,6 +4,7 @@ import { requireRole } from "@/lib/auth";
 import { Role, DoctorStatus, AppointmentStatus } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { getTodayISTDateString, getISTDateString } from "@/lib/time";
+import { effectiveSlot } from "@/lib/scheduling";
 import { DoctorAppointmentsView } from "./doctor-appointments-view";
 import { toDoctorAppointmentDto, type SerializedDoctorAppointment } from "@/lib/serializers";
 import { Calendar, Stethoscope, ShieldAlert } from "lucide-react";
@@ -72,9 +73,9 @@ export default async function DoctorAppointmentsPage() {
   const history: SerializedDoctorAppointment[] = [];
 
   for (const appt of rawAppointments) {
-    const slotDateISTStr = getISTDateString(appt.availability.startTime);
+    const slotDateISTStr = getISTDateString(effectiveSlot(appt).start);
     const isToday = slotDateISTStr === todayISTStr;
-    const isFutureTime = appt.availability.startTime > now;
+    const isFutureTime = effectiveSlot(appt).start > now;
     const isTerminal =
       appt.status === AppointmentStatus.COMPLETED ||
       appt.status === AppointmentStatus.CANCELLED ||
