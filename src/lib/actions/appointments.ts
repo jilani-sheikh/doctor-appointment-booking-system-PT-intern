@@ -348,6 +348,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/dashboard");
     revalidatePath("/doctor/queue");
+    revalidatePath("/doctor/slots");
     revalidatePath("/doctor/arrival-windows");
 
     return {
@@ -446,7 +447,7 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
   try {
     const result = await db.$transaction(
       async (tx) => {
-        // 1. Mark appointment cancelled
+        // 1. Mark appointment cancelled (preserve disruptedAt for 100% refund policy & audit trail; clear pending rescheduleStatus)
         await tx.appointment.update({
           where: { id: appointmentId },
           data: {
@@ -455,6 +456,7 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
             cancelledBy: "PATIENT",
             cancellationReason: "Cancelled by patient",
             waveId: null,
+            rescheduleStatus: null,
           },
         });
 
@@ -539,6 +541,7 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
     revalidatePath("/patient/payments");
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/dashboard");
+    revalidatePath("/doctor/slots");
     revalidatePath(`/doctors/${doctorId}`);
 
     return {

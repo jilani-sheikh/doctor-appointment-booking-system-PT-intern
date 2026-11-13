@@ -3,6 +3,7 @@ import type {
   DoctorStatus,
   SlotStatus,
   AppointmentStatus,
+  RescheduleLifecycleStatus,
   VisitStream,
   WaveStatus,
   NotificationType,
@@ -16,7 +17,7 @@ import {
   canDoctorNoShow,
 } from "@/lib/appointment-status";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
-import { effectiveSlot } from "@/lib/scheduling";
+import { effectiveSlot, type ThreeLevelAlternativeSuggestions } from "@/lib/scheduling";
 
 /**
  * Minimal serializable user representation passed across the Server-to-Client component boundary.
@@ -143,6 +144,8 @@ export interface SerializedPatientAppointment {
   rescheduleCount: number;
   disruptedAt?: string | null;
   disruptionReason?: string | null;
+  rescheduleStatus?: RescheduleLifecycleStatus | null;
+  suggestedAlternatives?: ThreeLevelAlternativeSuggestions | null;
   arrivalWindow?: string | null;
   estimatedStart?: string | null;
   estimatedDelayMinutes?: number | null;
@@ -172,6 +175,7 @@ export function toPatientAppointmentDto(
     rescheduleCount: number;
     disruptedAt?: Date | null;
     disruptionReason?: string | null;
+    rescheduleStatus?: RescheduleLifecycleStatus | null;
     slotStart?: Date | null;
     slotEnd?: Date | null;
     wave?: {
@@ -206,7 +210,8 @@ export function toPatientAppointmentDto(
     delayMinutes: number;
     roundedDelayMinutes: number;
     queuePosition: number;
-  } | null
+  } | null,
+  suggestedAlternatives?: ThreeLevelAlternativeSuggestions | null
 ): SerializedPatientAppointment {
   const appointmentSlot = effectiveSlot({
     slotStart: appt.slotStart ?? null,
@@ -264,6 +269,8 @@ export function toPatientAppointmentDto(
     rescheduleCount: appt.rescheduleCount,
     disruptedAt: appt.disruptedAt ? appt.disruptedAt.toISOString() : null,
     disruptionReason: appt.disruptionReason,
+    rescheduleStatus: appt.rescheduleStatus ?? null,
+    suggestedAlternatives: suggestedAlternatives ?? null,
     arrivalWindow,
     estimatedStart: estimate?.expectedStart.toISOString() ?? null,
     estimatedDelayMinutes: estimate?.roundedDelayMinutes ?? null,
@@ -659,6 +666,7 @@ export interface SerializedSlot {
   endTime: string;
   status: SlotStatus;
   capacity: number;
+  activeCount: number;
 }
 
 export function toSlotDto(slot: {
@@ -667,13 +675,16 @@ export function toSlotDto(slot: {
   endTime: Date;
   status: SlotStatus;
   capacity: number;
+  activeCount?: number;
 }): SerializedSlot {
+  const activeCount = slot.activeCount ?? 0;
   return {
     id: slot.id,
     startTime: slot.startTime.toISOString(),
     endTime: slot.endTime.toISOString(),
     status: slot.status,
-    capacity: slot.capacity,
+    capacity: Math.max(0, slot.capacity - activeCount),
+    activeCount,
   };
 }
 

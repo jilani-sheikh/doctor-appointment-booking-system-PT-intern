@@ -10,13 +10,16 @@ import {
   renderPaymentFailedHoldEmail,
   renderAppointmentReminderEmail,
   renderDoctorNewBookingEmail,
+  renderElasticShrinkRescheduleEmail,
 } from "@/lib/email/templates/index";
-import { effectiveSlot } from "@/lib/scheduling";
+import { effectiveSlot, type AlternativeSlotSuggestion } from "@/lib/scheduling";
+import { resolveNotificationEmailRecipient } from "@/lib/env";
 
 // Re-export in-app notification helpers
 export { createNotification, createManyNotifications } from "@/lib/notifications";
 
 export interface DeliveryPayload {
+  appointmentId?: string;
   doctorName?: string;
   specialization?: string;
   startTime?: string | Date;
@@ -35,6 +38,14 @@ export interface DeliveryPayload {
   oldEndTime?: string | Date;
   newStartTime?: string | Date;
   newEndTime?: string | Date;
+  originalStartTime?: string | Date;
+  originalEndTime?: string | Date;
+  isStreamWindow?: boolean;
+  operation?: "SHRINK" | "EXPAND";
+  disruptionReason?: string;
+  sameDayAlternatives?: AlternativeSlotSuggestion[];
+  upcomingDateAlternatives?: AlternativeSlotSuggestion[];
+  otherDoctorAlternatives?: AlternativeSlotSuggestion[];
   status?: "PENDING" | "FAILED" | "REQUESTED" | "SUCCESS";
   providerRefundId?: string;
   failureReason?: string;
@@ -54,7 +65,8 @@ export interface EnqueueEmailParams {
     | "refund_status"
     | "payment_failed_hold"
     | "reminder"
-    | "doctor_new_booking";
+    | "doctor_new_booking"
+    | "elastic_shrink_reschedule";
   payload: Record<string, unknown>;
   dedupeKey: string;
   scheduledFor?: Date;
@@ -106,8 +118,12 @@ export async function enqueueEmail(
     update: {}, // If dedupeKey already exists, preserve existing delivery state
   });
 
-  // For immediate emails, attempt best-effort delivery if invoked outside transaction
-  if (scheduledFor <= new Date() && !("transaction" in txOrDb)) {
+  // For immediate emails, attempt best-effort delivery if invoked outside transaction and still PENDING
+  if (
+    scheduledFor <= new Date() &&
+    !("transaction" in txOrDb) &&
+    delivery.status === DeliveryStatus.PENDING
+  ) {
     try {
       await deliverSingleNotification(delivery.id);
     } catch (err) {
@@ -145,6 +161,15 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
 
   if (!delivery) return false;
 
+  // Idempotency guard: never re-send a notification that has already been sent, skipped, or cancelled
+  if (
+    delivery.status === DeliveryStatus.SENT ||
+    delivery.status === DeliveryStatus.SKIPPED ||
+    delivery.status === DeliveryStatus.CANCELLED
+  ) {
+    return true;
+  }
+
   if (delivery.channel === NotificationChannel.WHATSAPP) {
     await db.notificationDelivery.update({
       where: { id: deliveryId },
@@ -157,11 +182,24 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
     return true;
   }
 
-  // 1. If recipient has no email, mark SKIPPED
-  if (!delivery.user?.email) {
+  // 1. Resolve target email recipient (overrides to ELASTIC_SCHEDULING_TEST_EMAIL for elastic rescheduling emails)
+  const recipientResolution = resolveNotificationEmailRecipient(
+    delivery.template,
+    delivery.user?.email
+  );
+  if (!recipientResolution.recipient) {
+    if (delivery.template === "elastic_shrink_reschedule") {
+      console.warn(
+        `[Outbox] Skipping elastic rescheduling email for delivery ${deliveryId}: ${recipientResolution.skipReason}`
+      );
+    }
     await db.notificationDelivery.update({
       where: { id: deliveryId },
-      data: { status: DeliveryStatus.SKIPPED, lastError: "User has no email address" },
+      data: {
+        status: DeliveryStatus.SKIPPED,
+        lastError: recipientResolution.skipReason ?? "User has no email address",
+        lockedAt: null,
+      },
     });
     return true;
   }
@@ -306,6 +344,34 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
       });
       break;
 
+    case "elastic_shrink_reschedule":
+      subject = "Action Required: Please Reschedule Your Appointment";
+      emailContent = renderElasticShrinkRescheduleEmail({
+        appointmentId: payload.appointmentId || delivery.appointmentId || "",
+        patientName: delivery.user.name || payload.patientName || "Patient",
+        doctorName: payload.doctorName || "Practitioner",
+        specialization: payload.specialization,
+        originalStartTime: new Date(
+          payload.originalStartTime || payload.startTime || appointmentSlot?.start || Date.now()
+        ),
+        originalEndTime: payload.originalEndTime
+          ? new Date(payload.originalEndTime)
+          : payload.endTime
+          ? new Date(payload.endTime)
+          : appointmentSlot?.end
+          ? new Date(appointmentSlot.end)
+          : undefined,
+        isStreamWindow: Boolean(payload.isStreamWindow),
+        newStartTime: payload.newStartTime ? new Date(payload.newStartTime) : undefined,
+        newEndTime: payload.newEndTime ? new Date(payload.newEndTime) : undefined,
+        operation: payload.operation,
+        disruptionReason: payload.disruptionReason || payload.reason,
+        sameDayAlternatives: payload.sameDayAlternatives ?? [],
+        upcomingDateAlternatives: payload.upcomingDateAlternatives ?? [],
+        otherDoctorAlternatives: payload.otherDoctorAlternatives ?? [],
+      });
+      break;
+
     default:
       console.warn(`[Outbox] Unknown template ${delivery.template}`);
       await db.notificationDelivery.update({
@@ -316,7 +382,7 @@ export async function deliverSingleNotification(deliveryId: string): Promise<boo
   }
 
   const sendResult = await sendEmail({
-    to: delivery.user.email,
+    to: recipientResolution.recipient,
     subject,
     html: emailContent.html,
     text: emailContent.text,

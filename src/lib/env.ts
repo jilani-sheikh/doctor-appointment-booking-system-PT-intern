@@ -57,8 +57,11 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
+  ELASTIC_SCHEDULING_TEST_EMAIL: z.string().email().optional(),
   CRON_SECRET: z.string().optional(),
   REMINDER_OFFSETS_MINUTES: z.string().optional(),
+  GEMINI_API_KEY: z.string().min(1).optional(),
+  GEMINI_MODEL: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -292,6 +295,57 @@ export function getResendFromEmail(): string {
 }
 
 /**
+ * Retrieves the dedicated test email recipient for Elastic Scheduling rescheduling notifications.
+ * Returns null if ELASTIC_SCHEDULING_TEST_EMAIL is missing or invalid so callers never fall back
+ * to the patient's registered email address.
+ */
+export function getElasticSchedulingTestEmail(): string | null {
+  const raw = process.env.ELASTIC_SCHEDULING_TEST_EMAIL?.trim();
+  if (!raw) {
+    return null;
+  }
+  const parsed = z.string().email().safeParse(raw);
+  if (!parsed.success) {
+    console.warn("[Medrella Config Warning] Invalid ELASTIC_SCHEDULING_TEST_EMAIL format; skipping test email override.");
+    return null;
+  }
+  return parsed.data;
+}
+
+/**
+ * Resolves the email recipient for an outbox notification template.
+ * - For "elastic_shrink_reschedule", strictly uses ELASTIC_SCHEDULING_TEST_EMAIL and never falls back
+ *   to the patient's registered email address if missing or invalid.
+ * - For all other templates, uses the recipient user's registered email address.
+ */
+export function resolveNotificationEmailRecipient(
+  template: string,
+  userEmail?: string | null
+): { recipient: string | null; skipReason?: string } {
+  if (template === "elastic_shrink_reschedule") {
+    const testRecipient = getElasticSchedulingTestEmail();
+    if (!testRecipient) {
+      return {
+        recipient: null,
+        skipReason:
+          "Missing or invalid ELASTIC_SCHEDULING_TEST_EMAIL; skipped to avoid sending to patient's registered email",
+      };
+    }
+    return { recipient: testRecipient };
+  }
+
+  const normalizedUserEmail = userEmail?.trim();
+  if (!normalizedUserEmail) {
+    return {
+      recipient: null,
+      skipReason: "User has no email address",
+    };
+  }
+
+  return { recipient: normalizedUserEmail };
+}
+
+/**
  * Lazily retrieves CRON_SECRET for securing /api/cron/tick.
  */
 export function getCronSecret(): string {
@@ -319,6 +373,36 @@ export function getReminderOffsetsMinutes(): number[] {
     .map((val) => parseInt(val.trim(), 10))
     .filter((n) => !isNaN(n) && n > 0);
   return parsed.length > 0 ? parsed : DEFAULT_REMINDER_OFFSETS_MINUTES;
+}
+
+/**
+ * Checks whether GEMINI_API_KEY is present in the runtime environment.
+ */
+export function isGeminiConfigured(): boolean {
+  return Boolean(process.env.GEMINI_API_KEY?.trim());
+}
+
+/**
+ * Lazily retrieves the Gemini API key for server-side AI assistant execution.
+ */
+export function getGeminiApiKey(): string {
+  const val = process.env.GEMINI_API_KEY?.trim();
+  if (!val) {
+    throw new Error(
+      "[Medrella Config Error] Missing required environment variable: GEMINI_API_KEY. Set GEMINI_API_KEY in .env.local to use the AI Assistant."
+    );
+  }
+  return val;
+}
+
+export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
+
+/**
+ * Returns the configured Gemini model ID, defaulting to gemini-3.8-flash.
+ */
+export function getGeminiModelId(): string {
+  const val = process.env.GEMINI_MODEL?.trim();
+  return val && val.length > 0 ? val : DEFAULT_GEMINI_MODEL;
 }
 
 /**

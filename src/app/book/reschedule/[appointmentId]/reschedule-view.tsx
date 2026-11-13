@@ -7,9 +7,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Calendar, Clock, RotateCcw, AlertTriangle } from "lucide-react";
-import { formatSlotRange, formatSlotDateTimeRangeIST } from "@/lib/time";
+import { formatDateIST, formatSlotRange, formatSlotDateTimeRangeIST } from "@/lib/time";
 import { patientRescheduleAppointmentAction } from "@/lib/actions/reschedule";
 import type { SerializedPublicSlot } from "@/lib/serializers";
+import {
+  getVisibleAlternativeCategories,
+  type AlternativeSlotSuggestion,
+  type ThreeLevelAlternativeSuggestions,
+} from "@/lib/scheduling";
 
 interface RescheduleViewProps {
   appointmentId: string;
@@ -21,6 +26,7 @@ interface RescheduleViewProps {
   maxRescheduleCount: number;
   isDisrupted: boolean;
   disruptionReason?: string | null;
+  suggestedAlternatives?: ThreeLevelAlternativeSuggestions;
   slotsGrouped: Record<string, SerializedPublicSlot[]>;
 }
 
@@ -34,6 +40,7 @@ export function RescheduleView({
   maxRescheduleCount,
   isDisrupted,
   disruptionReason,
+  suggestedAlternatives,
   slotsGrouped,
 }: RescheduleViewProps) {
   const router = useRouter();
@@ -58,11 +65,70 @@ export function RescheduleView({
         router.push("/patient/appointments");
       } else {
         toast.error(res.error);
+        if ("staleSlot" in res && res.staleSlot) {
+          setSelectedSlotId(null);
+          setSelectedSlotTimeStr("");
+          router.refresh();
+        }
       }
     });
   };
 
   const dates = Object.keys(slotsGrouped);
+  const visibleCategories = getVisibleAlternativeCategories(suggestedAlternatives);
+
+  const renderSuggestionCard = (
+    title: string,
+    items: AlternativeSlotSuggestion[],
+    showDoctor = false
+  ) => (
+    <Card className="border-border shadow-xs">
+      <CardHeader className="py-2.5 px-4 bg-muted/40 border-b border-border">
+        <CardTitle className="text-xs font-semibold text-foreground">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="p-3.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          {items.map((slot) => {
+            const isSelected = selectedSlotId === slot.id;
+            const dateLabel = formatDateIST(slot.startTime, {
+              weekday: "short",
+              day: "numeric",
+              month: "short",
+            });
+            const timeRange = formatSlotRange(slot.startTime, slot.endTime);
+            const label = showDoctor
+              ? `Dr. ${slot.doctorName} · ${dateLabel}, ${timeRange}`
+              : `${dateLabel}, ${timeRange}`;
+
+            return (
+              <button
+                key={slot.id}
+                type="button"
+                onClick={() => {
+                  setSelectedSlotId(slot.id);
+                  setSelectedSlotTimeStr(label);
+                }}
+                className={`min-w-0 overflow-hidden py-2.5 px-3 rounded-lg border text-xs font-medium transition-all text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                  isSelected
+                    ? "bg-primary text-primary-foreground border-primary shadow-xs font-bold ring-2 ring-primary/30"
+                    : "bg-card text-foreground border-border hover:border-primary/50 hover:bg-muted/30"
+                }`}
+              >
+                {showDoctor && (
+                  <div className="text-[11px] opacity-85 truncate">
+                    Dr. {slot.doctorName} ({slot.specialization})
+                  </div>
+                )}
+                <div className="truncate">
+                  {dateLabel} · {timeRange}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
 
   return (
     <div className="space-y-6">
@@ -91,13 +157,44 @@ export function RescheduleView({
             <div className="p-2.5 rounded-md bg-amber-100/70 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-100 flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
               <span>
-                <strong>Doctor Unavailable: </strong>
-                {disruptionReason ?? "Schedule disruption"}. You may pick any upcoming available slot below.
+                <strong>Doctor Availability Updated: </strong>
+                {disruptionReason ?? "Schedule disruption"}. Your existing appointment remains protected until you select a new time or the clinic resolves it manually.
               </span>
             </div>
           )}
         </CardContent>
       </Card>
+
+      {/* Recommended Three-Level Alternative Categories */}
+      {suggestedAlternatives && (
+        <div className="space-y-3">
+          <h3 className="font-bold text-base text-foreground flex items-center gap-2">
+            <Calendar className="h-4 w-4 text-primary" />
+            Recommended Alternative Appointments
+          </h3>
+
+          {visibleCategories.length === 0 ? (
+            <Card className="border-amber-300 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
+              <CardContent className="p-4 text-xs text-amber-900 dark:text-amber-100 space-y-1">
+                <p className="font-semibold">No Open Online Alternatives Currently Available</p>
+                <p>
+                  There are currently no open alternative slots available across same-day, upcoming dates, or other doctors in the same specialization. Please contact the clinic for manual assistance. Your existing appointment remains protected until resolved.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            visibleCategories.map((category) => (
+              <div key={category.key}>
+                {renderSuggestionCard(
+                  `${category.priority}. ${category.title}`,
+                  category.items,
+                  category.key === "otherDoctor"
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
 
       {/* Available Slots Picker */}
       <div className="space-y-4">

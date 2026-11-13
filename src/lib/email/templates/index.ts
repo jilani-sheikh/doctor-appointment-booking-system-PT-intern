@@ -1,6 +1,7 @@
-import { formatDateTimeIST, formatSlotDateTimeRangeIST } from "@/lib/time";
+import { formatDateIST, formatDateTimeIST, formatSlotDateTimeRangeIST, formatSlotRange } from "@/lib/time";
 import { formatINR } from "@/lib/money";
 import { getAppUrl } from "@/lib/env";
+import type { AlternativeSlotSuggestion } from "@/lib/scheduling";
 
 export function escapeHtml(str?: string | null): string {
   if (!str) return "";
@@ -413,5 +414,140 @@ export function renderDoctorNewBookingEmail(params: {
   return baseLayout("New Consultation Booked", content, {
     text: "View Live Queue",
     url: `${appUrl}/doctor/queue`,
+  });
+}
+
+// 9. Elastic Shrink / Expand Reschedule Notice with Three-Level Alternatives
+export function renderElasticShrinkRescheduleEmail(params: {
+  appointmentId: string;
+  patientName: string;
+  doctorName: string;
+  specialization?: string;
+  originalStartTime: Date;
+  originalEndTime?: Date;
+  isStreamWindow?: boolean;
+  newStartTime?: Date;
+  newEndTime?: Date;
+  operation?: "SHRINK" | "EXPAND";
+  disruptionReason?: string;
+  sameDayAlternatives?: AlternativeSlotSuggestion[];
+  upcomingDateAlternatives?: AlternativeSlotSuggestion[];
+  otherDoctorAlternatives?: AlternativeSlotSuggestion[];
+}) {
+  const appUrl = getAppUrl();
+  const rescheduleUrl = `${appUrl}/book/reschedule/${encodeURIComponent(params.appointmentId)}`;
+  const originalDate = formatDateIST(params.originalStartTime);
+  const originalTime = params.originalEndTime
+    ? `${formatSlotRange(params.originalStartTime, params.originalEndTime)} IST`
+    : `${formatDateTimeIST(params.originalStartTime)} IST`;
+  const updatedWindowTime =
+    params.newStartTime && params.newEndTime
+      ? `${formatSlotRange(params.newStartTime, params.newEndTime)} IST`
+      : null;
+
+  const sameDay = params.sameDayAlternatives ?? [];
+  const upcoming = params.upcomingDateAlternatives ?? [];
+  const otherDoctors = params.otherDoctorAlternatives ?? [];
+  const hasAnyAlternatives =
+    sameDay.length > 0 || upcoming.length > 0 || otherDoctors.length > 0;
+
+  const renderSlotItems = (items: AlternativeSlotSuggestion[], includeDoctor = false) =>
+    `<ul style="margin: 8px 0 16px 0; padding-left: 20px; font-size: 14px; color: #1e293b;">
+      ${items
+        .map((slot) => {
+          const dateStr = formatDateIST(slot.startTime);
+          const timeStr = `${formatSlotRange(slot.startTime, slot.endTime)} IST`;
+          const docLabel = includeDoctor
+            ? `Dr. ${escapeHtml(slot.doctorName)} (${escapeHtml(slot.specialization)}) — `
+            : "";
+          return `<li style="margin-bottom: 6px;">${docLabel}<strong>${escapeHtml(dateStr)}</strong> · ${escapeHtml(timeStr)}</li>`;
+        })
+        .join("")}
+    </ul>`;
+
+  let alternativesHtml = "";
+  if (hasAnyAlternatives) {
+    const sections: string[] = [];
+    if (sameDay.length > 0) {
+      sections.push(`
+        <div style="margin-top: 12px;">
+          <strong style="font-size: 14px; color: #0f766e;">1. Remaining slots on the same day</strong>
+          ${renderSlotItems(sameDay, false)}
+        </div>
+      `);
+    }
+    if (upcoming.length > 0) {
+      sections.push(`
+        <div style="margin-top: 12px;">
+          <strong style="font-size: 14px; color: #0f766e;">2. Other available dates with your doctor</strong>
+          ${renderSlotItems(upcoming, false)}
+        </div>
+      `);
+    }
+    if (otherDoctors.length > 0) {
+      sections.push(`
+        <div style="margin-top: 12px;">
+          <strong style="font-size: 14px; color: #0f766e;">3. Other doctors at the same clinic</strong>
+          ${renderSlotItems(otherDoctors, true)}
+        </div>
+      `);
+    }
+    alternativesHtml = `
+      <p style="margin-top: 20px; font-weight: 600; color: #0f172a;">Here are some alternative appointments available for you:</p>
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 12px 0 20px 0;">
+        ${sections.join("")}
+      </div>
+      <p style="font-size: 14px;">Please select a suitable alternative using the link below:</p>
+    `;
+  } else {
+    alternativesHtml = `
+      <div style="background-color: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 14px 16px; margin: 20px 0; color: #92400e; font-size: 14px;">
+        <strong>No Immediate Alternatives Currently Available:</strong><br/>
+        There are currently no open alternative slots available online. Please contact the clinic for manual assistance, or check the rescheduling page for newly opened slots.
+      </div>
+    `;
+  }
+
+  const streamChangeVerb =
+    params.operation === "EXPAND" ? "expanded and updated" : "shortened";
+
+  const introParagraph = params.isStreamWindow
+    ? `<p>Your doctor has ${streamChangeVerb} their continuous consultation window. Because Stream consultations do not have fixed individual sub-slot times, all bookings in this window were flagged in case the updated hours no longer work for you. Your seat in the updated window remains protected, or you may reschedule to an alternative window.</p>`
+    : `<p>Your doctor has recently updated their availability, and unfortunately, your existing appointment is affected and needs to be rescheduled. Please select a new consultation slot below.</p>`;
+
+  const updatedWindowItem =
+    params.isStreamWindow && updatedWindowTime
+      ? `<li><strong>Updated Window:</strong> ${escapeHtml(updatedWindowTime)}</li>`
+      : "";
+
+  const reasonText =
+    params.disruptionReason ||
+    (params.isStreamWindow
+      ? `Doctor's continuous consultation window was ${streamChangeVerb}.`
+      : "Doctor availability was updated.");
+
+  const content = `
+    <p>Hello ${escapeHtml(params.patientName)},</p>
+    ${introParagraph}
+    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0;">
+      <p style="margin: 0 0 8px 0; font-weight: 700; color: #0f172a; font-size: 14px;">Your Current Appointment</p>
+      <ul style="margin: 0; padding-left: 18px; font-size: 14px; color: #334155;">
+        <li><strong>Patient:</strong> ${escapeHtml(params.patientName)}</li>
+        <li><strong>Doctor:</strong> Dr. ${escapeHtml(params.doctorName)}${params.specialization ? ` (${escapeHtml(params.specialization)})` : ""}</li>
+        <li><strong>Date:</strong> ${escapeHtml(originalDate)}</li>
+        <li><strong>${params.isStreamWindow ? "Original Window" : "Time"}:</strong> ${escapeHtml(originalTime)}</li>
+        ${updatedWindowItem}
+        <li><strong>Reason:</strong> ${escapeHtml(reasonText)}</li>
+      </ul>
+    </div>
+    ${alternativesHtml}
+    <p style="font-size: 13px; color: #475569;">Please note that suggested appointments are subject to availability and will be confirmed only after successful booking.</p>
+    <p style="font-size: 13px; color: #475569;">If none of these options work for you, please contact the clinic for assistance. Your existing appointment will remain protected until the matter is resolved.</p>
+    <p style="font-size: 14px; margin-top: 16px;">Thank you for your understanding.<br/>Regards,<br/>Clinic Team</p>
+  `;
+
+  return baseLayout("Action Required: Please Reschedule Your Appointment", content, {
+    text: "Reschedule Appointment",
+    url: rescheduleUrl,
   });
 }

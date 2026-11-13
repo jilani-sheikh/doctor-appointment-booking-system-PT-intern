@@ -202,6 +202,9 @@ export async function bookWithPaymentHold(input: BookWithPaymentInput): Promise<
       },
     });
 
+    revalidatePath("/doctor/slots");
+    revalidatePath(`/doctors/${slot.doctor.id}`);
+
     return {
       success: true,
       orderId,

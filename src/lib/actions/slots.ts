@@ -7,14 +7,31 @@ import { getISTDateString, parseISTDateTime } from "@/lib/time";
 import { Role, DoctorStatus, SlotStatus } from "@/generated/prisma/client";
 import { revalidatePath } from "next/cache";
 import { releaseSlot } from "@/lib/slots";
-import { scheduleSchema, type ScheduleInput } from "@/lib/validations/slots";
-import { generateScheduleAvailabilities, validateScheduleInput, planScheduleDates, shouldRestoreRecurringDate, overrideRequiresConfirmation, scheduleDateRelationship } from "@/lib/scheduling";
+import { scheduleSchema, type ScheduleInput, elasticAvailabilitySchema, type ElasticAvailabilityInput } from "@/lib/validations/slots";
+import {
+  generateScheduleAvailabilities,
+  validateScheduleInput,
+  planScheduleDates,
+  shouldRestoreRecurringDate,
+  overrideRequiresConfirmation,
+  scheduleDateRelationship,
+  calculateElasticRange,
+  diffAvailabilityIntervals,
+  identifyAffectedElasticAppointments,
+  buildElasticRescheduleDedupeKey,
+  type ElasticEdge,
+  type ElasticOperation,
+  type IdentifiedAffectedElasticAppointment,
+} from "@/lib/scheduling";
 import { getTodayISTDateString } from "@/lib/time";
-import { AvailabilityKind } from "@/generated/prisma/client";
+import { AvailabilityKind, RescheduleLifecycleStatus } from "@/generated/prisma/client";
 import { AppointmentStatus, RefundReason, NotificationType, PaymentStatus } from "@/generated/prisma/client";
 import { requestRefund } from "@/lib/payments/service";
 import { createNotification } from "@/lib/notifications";
 import { enqueuePatientNotifications } from "@/lib/notifications/index";
+import { syncAppointmentReminders } from "@/lib/notifications/reminders";
+import { notifyWaitlistAfterSlotRelease } from "@/lib/slots";
+import { discoverAlternativeAppointmentsForPatient } from "@/lib/actions/reschedule";
 
 /**
  * Generates slots in bulk according to the doctor's specifications.
@@ -200,6 +217,9 @@ export async function toggleBlockSlotAction(slotId: string) {
 
   const slot = await db.availability.findUnique({
     where: { id: slotId },
+    include: {
+      parent: { select: { startTime: true, endTime: true, status: true } },
+    },
   });
 
   if (!slot || slot.doctorId !== user.doctor.id) {
@@ -208,6 +228,18 @@ export async function toggleBlockSlotAction(slotId: string) {
 
   if (slot.status === SlotStatus.BOOKED) {
     return { success: false, error: "Booked slots cannot be modified." };
+  }
+
+  if (
+    slot.status === SlotStatus.BLOCKED &&
+    slot.kind === AvailabilityKind.WAVE_SLOT &&
+    slot.parent &&
+    (slot.startTime < slot.parent.startTime || slot.endTime > slot.parent.endTime)
+  ) {
+    return {
+      success: false,
+      error: "This slot falls outside the shrunk Wave window. Expand the Wave window to re-open it.",
+    };
   }
 
   if (slot.status === SlotStatus.AVAILABLE) {
@@ -474,6 +506,654 @@ const OVERRIDE_ACTIVE_STATUSES = [
     AppointmentStatus.IN_CONSULTATION,
   ];
 
+  const ELASTIC_ACTIVE_STATUSES = [
+    AppointmentStatus.PENDING,
+    AppointmentStatus.CONFIRMED,
+    AppointmentStatus.CHECKED_IN,
+    AppointmentStatus.IN_CONSULTATION,
+    AppointmentStatus.PENDING_PAYMENT,
+  ];
+  const ELASTIC_ACTIVE_STATUS_SET = new Set<AppointmentStatus>(ELASTIC_ACTIVE_STATUSES);
+
+  function nextCalendarDate(date: string): string {
+    const next = new Date(`${date}T00:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    return next.toISOString().slice(0, 10);
+  }
+
+  function scheduleDatesFrom(schedule: { recurrence: string; startDate: string; endDate: string; daysOfWeek: number[] }, from: string) {
+    const dates: string[] = [];
+    let date = from < schedule.startDate ? schedule.startDate : from;
+    while (date <= schedule.endDate) {
+      const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+      if (schedule.recurrence === "ONCE" || schedule.daysOfWeek.includes(weekday)) dates.push(date);
+      if (schedule.recurrence === "ONCE") break;
+      date = nextCalendarDate(date);
+    }
+    return dates;
+  }
+
+  async function elasticAvailabilityAction(input: ElasticAvailabilityInput, operation: ElasticOperation) {
+    const user = await requireRole(Role.DOCTOR);
+    const doctor = user.doctor;
+    if (!doctor || doctor.status !== DoctorStatus.APPROVED) {
+      return { success: false, error: "Only approved doctors can manage generated availability." };
+    }
+    const parsed = elasticAvailabilitySchema.safeParse(input);
+    if (!parsed.success) return { success: false, error: parsed.error.errors[0]?.message ?? "Invalid availability adjustment." };
+    const data = parsed.data;
+    const schedule = await db.availabilitySchedule.findUnique({ where: { id: data.scheduleId } });
+    if (!schedule || schedule.doctorId !== doctor.id || schedule.status !== "ACTIVE") {
+      return { success: false, error: "Schedule not found or unauthorized." };
+    }
+    const todayIST = getTodayISTDateString();
+    if (data.date < todayIST) return { success: false, error: "Availability changes cannot target a past date." };
+
+    const dates = data.applyToFuture
+      ? scheduleDatesFrom(schedule, data.date)
+      : [data.date];
+    if (dates.length === 0) return { success: false, error: "No future dates remain in this schedule." };
+
+    const availableSeats: Array<{ doctorId: string; startTime: Date }> = [];
+    const allAffectedAppointments: IdentifiedAffectedElasticAppointment[] = [];
+    const appliedDates: string[] = [];
+    const failedDates: string[] = [];
+
+    for (const date of dates) {
+      try {
+        await db.$transaction(async (tx) => {
+          const exception = await tx.availabilityException.findFirst({ where: { scheduleId: schedule.id, date } });
+          if (exception) {
+            failedDates.push(`${date} (blocked/exception date)`);
+            return;
+          }
+
+          const candidateRow = await tx.availability.findFirst({
+            where: {
+              doctorId: doctor.id,
+              scheduleId: schedule.id,
+              kind: schedule.type === "WAVE" ? AvailabilityKind.WAVE_PARENT : AvailabilityKind.STREAM_WINDOW,
+              startTime: { gte: parseISTDateTime(date, "00:00"), lt: parseISTDateTime(nextCalendarDate(date), "00:00") },
+            },
+            select: { id: true },
+          });
+
+          if (!candidateRow) {
+            failedDates.push(`${date} (availability not found)`);
+            return;
+          }
+
+          // Lock availability row to prevent concurrent conflicting shrink/expand modifications
+          await tx.$queryRaw`
+            SELECT "id" FROM "availabilities" WHERE "id" = ${candidateRow.id} FOR UPDATE
+          `;
+
+          const existingRow = await tx.availability.findUnique({
+            where: { id: candidateRow.id },
+          });
+          if (!existingRow) {
+            failedDates.push(`${date} (availability not found)`);
+            return;
+          }
+
+          let next: ReturnType<typeof calculateElasticRange>;
+          try {
+            next = calculateElasticRange(existingRow, data.edge as ElasticEdge, data.steps, schedule.durationMinutes, operation);
+          } catch (rangeErr) {
+            failedDates.push(`${date} (${rangeErr instanceof Error ? rangeErr.message : "invalid range"})`);
+            return;
+          }
+
+          const diff = diffAvailabilityIntervals(existingRow, next, schedule.durationMinutes);
+          const nextMinutes = (next.endTime.getTime() - next.startTime.getTime()) / 60_000;
+          if (schedule.type === "WAVE" && nextMinutes % schedule.durationMinutes !== 0) {
+            failedDates.push(`${date} (window not divisible by duration)`);
+            return;
+          }
+
+          const now = new Date();
+          if (next.endTime <= now) {
+            failedDates.push(`${date} (adjusted window is in the past)`);
+            return;
+          }
+
+          const children = schedule.type === "WAVE"
+            ? await tx.availability.findMany({
+                where: { parentId: existingRow.id },
+                include: {
+                  appointments: {
+                    select: {
+                      id: true,
+                      status: true,
+                      slotStart: true,
+                      slotEnd: true,
+                      patient: { select: { userId: true } },
+                    },
+                  },
+                  _count: {
+                    select: {
+                      appointments: true,
+                      rescheduledAppointments: true,
+                    },
+                  },
+                },
+                orderBy: { startTime: "asc" },
+              })
+            : [];
+
+          if (operation === "EXPAND") {
+            if (diff.added.some((interval) => interval.startTime <= now)) {
+              failedDates.push(`${date} (expanded time is in the past)`);
+              return;
+            }
+            const timeOff = await tx.doctorTimeOff.findFirst({
+              where: { doctorId: doctor.id, startAt: { lt: next.endTime }, endAt: { gt: next.startTime } },
+            });
+            if (timeOff) {
+              failedDates.push(`${date} (doctor time off)`);
+              return;
+            }
+            const overlaps = await tx.availability.findMany({
+              where: {
+                doctorId: doctor.id,
+                status: { not: SlotStatus.BLOCKED },
+                kind: { not: AvailabilityKind.WAVE_PARENT },
+                id: { notIn: [existingRow.id, ...children.map((child) => child.id)] },
+                startTime: { lt: next.endTime },
+                endTime: { gt: next.startTime },
+              },
+              select: { startTime: true, endTime: true },
+            });
+            if (overlaps.some((other) => diff.added.some((interval) => other.startTime < interval.endTime && other.endTime > interval.startTime))) {
+              failedDates.push(`${date} (overlaps existing availability)`);
+              return;
+            }
+
+            if (schedule.type === "WAVE") {
+              for (const interval of diff.added) {
+                const existingChild = await tx.availability.findFirst({
+                  where: {
+                    doctorId: doctor.id,
+                    startTime: interval.startTime,
+                    kind: AvailabilityKind.WAVE_SLOT,
+                  },
+                  include: {
+                    appointments: {
+                      select: {
+                        id: true,
+                        status: true,
+                        rescheduleStatus: true,
+                      },
+                    },
+                  },
+                });
+                if (existingChild) {
+                  const actualActiveCount = existingChild.appointments.filter((a) =>
+                    ELASTIC_ACTIVE_STATUS_SET.has(a.status)
+                  ).length;
+                  const effectiveCapacity = Math.max(schedule.capacity, actualActiveCount);
+                  const reactivatedStatus = existingChild.blockedByTimeOffId
+                    ? SlotStatus.BLOCKED
+                    : actualActiveCount >= effectiveCapacity
+                    ? SlotStatus.BOOKED
+                    : SlotStatus.AVAILABLE;
+
+                  const reactivated = await tx.availability.update({
+                    where: { id: existingChild.id },
+                    data: {
+                      endTime: interval.endTime,
+                      capacity: effectiveCapacity,
+                      activeCount: actualActiveCount,
+                      scheduleId: schedule.id,
+                      parentId: existingRow.id,
+                      status: reactivatedStatus,
+                    },
+                  });
+
+                  // If the child slot is restored into the active window (not blocked by time-off),
+                  // clear pending shrink disruption flags on active appointments still booked in this slot
+                  if (!existingChild.blockedByTimeOffId) {
+                    const restorableApptIds = existingChild.appointments
+                      .filter(
+                        (a) =>
+                          ELASTIC_ACTIVE_STATUS_SET.has(a.status) &&
+                          a.rescheduleStatus === RescheduleLifecycleStatus.PENDING_RESCHEDULING
+                      )
+                      .map((a) => a.id);
+                    if (restorableApptIds.length > 0) {
+                      await tx.appointment.updateMany({
+                        where: { id: { in: restorableApptIds } },
+                        data: {
+                          disruptedAt: null,
+                          disruptionReason: null,
+                          rescheduleStatus: null,
+                        },
+                      });
+                    }
+                  }
+
+                  if (reactivated.status === SlotStatus.AVAILABLE) {
+                    availableSeats.push({ doctorId: doctor.id, startTime: reactivated.startTime });
+                  }
+                } else {
+                  const created = await tx.availability.create({
+                    data: {
+                      doctorId: doctor.id,
+                      startTime: interval.startTime,
+                      endTime: interval.endTime,
+                      kind: AvailabilityKind.WAVE_SLOT,
+                      capacity: schedule.capacity,
+                      scheduleId: schedule.id,
+                      parentId: existingRow.id,
+                      status: SlotStatus.AVAILABLE,
+                    },
+                  });
+                  availableSeats.push({ doctorId: doctor.id, startTime: created.startTime });
+                }
+              }
+            } else {
+              if (diff.added.length > 0) {
+                availableSeats.push({ doctorId: doctor.id, startTime: diff.added[0]!.startTime });
+              }
+
+              // STREAM expand: check whether active appointments on the continuous STREAM_WINDOW have their
+              // effective consultation window altered by the expansion.
+              const streamExpandAppointments = await tx.appointment.findMany({
+                where: {
+                  availabilityId: existingRow.id,
+                  status: { in: ELASTIC_ACTIVE_STATUSES },
+                },
+                select: {
+                  id: true,
+                  status: true,
+                  slotStart: true,
+                  slotEnd: true,
+                  patient: { select: { userId: true } },
+                },
+              });
+
+              const affectedStreamOnExpand = identifyAffectedElasticAppointments({
+                operation: "EXPAND",
+                scheduleType: "STREAM",
+                previousRange: {
+                  startTime: existingRow.startTime,
+                  endTime: existingRow.endTime,
+                },
+                nextRange: next,
+                appointments: streamExpandAppointments.map((a) => ({
+                  id: a.id,
+                  patientUserId: a.patient.userId,
+                  status: a.status,
+                  slotStart: a.slotStart,
+                  slotEnd: a.slotEnd,
+                })),
+              });
+
+              if (affectedStreamOnExpand.length > 0) {
+                const reason = affectedStreamOnExpand[0]!.disruptionReason;
+                await tx.appointment.updateMany({
+                  where: { id: { in: affectedStreamOnExpand.map((a) => a.id) } },
+                  data: {
+                    disruptedAt: now,
+                    disruptionReason: reason,
+                    rescheduleStatus: RescheduleLifecycleStatus.PENDING_RESCHEDULING,
+                    waveId: null,
+                  },
+                });
+
+                for (const appt of streamExpandAppointments) {
+                  if (!appt.slotStart && !appt.slotEnd) {
+                    await syncAppointmentReminders(tx, {
+                      appointmentId: appt.id,
+                      userId: appt.patient.userId,
+                      slotStartTime: next.startTime,
+                      slotEndTime: next.endTime,
+                      status: appt.status,
+                    });
+                  }
+                }
+
+                allAffectedAppointments.push(...affectedStreamOnExpand);
+              }
+            }
+
+            await tx.availability.update({
+              where: { id: existingRow.id },
+              data: {
+                startTime: next.startTime,
+                endTime: next.endTime,
+                status:
+                  existingRow.blockedByTimeOffId
+                    ? SlotStatus.BLOCKED
+                    : existingRow.activeCount >= existingRow.capacity
+                    ? SlotStatus.BOOKED
+                    : SlotStatus.AVAILABLE,
+              },
+            });
+
+            appliedDates.push(date);
+            return;
+          }
+
+          // SHRINK operation: apply immediately and identify affected appointments
+          if (schedule.type === "WAVE") {
+            const removedChildren = children.filter((child) =>
+              diff.removed.some(
+                (interval) => child.startTime < interval.endTime && child.endTime > interval.startTime
+              )
+            );
+
+            // Delete only child slots with no appointment or rescheduling references
+            const deletableChildIds = removedChildren
+              .filter(
+                (child) =>
+                  child._count.appointments === 0 && child._count.rescheduledAppointments === 0
+              )
+              .map((child) => child.id);
+
+            // Preserve historical/booked child slots linked to parent and mark them BLOCKED
+            const blockedChildIds = removedChildren
+              .filter(
+                (child) =>
+                  child._count.appointments > 0 || child._count.rescheduledAppointments > 0
+              )
+              .map((child) => child.id);
+
+            if (deletableChildIds.length > 0) {
+              await tx.availability.deleteMany({
+                where: {
+                  id: { in: deletableChildIds },
+                  appointments: { none: {} },
+                  rescheduledAppointments: { none: {} },
+                },
+              });
+            }
+
+            if (blockedChildIds.length > 0) {
+              await tx.availability.updateMany({
+                where: { id: { in: blockedChildIds } },
+                data: { status: SlotStatus.BLOCKED },
+              });
+            }
+
+            const dateAffected = identifyAffectedElasticAppointments({
+              operation: "SHRINK",
+              scheduleType: "WAVE",
+              previousRange: {
+                startTime: existingRow.startTime,
+                endTime: existingRow.endTime,
+              },
+              nextRange: next,
+              removedIntervals: diff.removed,
+              appointments: children.flatMap((child) =>
+                child.appointments.map((appointment) => ({
+                  id: appointment.id,
+                  patientUserId: appointment.patient.userId,
+                  status: appointment.status,
+                  slotStart: appointment.slotStart,
+                  slotEnd: appointment.slotEnd,
+                  slotStartTime: child.startTime,
+                  slotEndTime: child.endTime,
+                }))
+              ),
+            });
+
+            if (dateAffected.length > 0) {
+              await tx.appointment.updateMany({
+                where: { id: { in: dateAffected.map((a) => a.id) } },
+                data: {
+                  disruptedAt: now,
+                  disruptionReason: dateAffected[0]!.disruptionReason,
+                  rescheduleStatus: RescheduleLifecycleStatus.PENDING_RESCHEDULING,
+                  waveId: null,
+                },
+              });
+              allAffectedAppointments.push(...dateAffected);
+            }
+
+            await tx.availability.update({
+              where: { id: existingRow.id },
+              data: {
+                startTime: next.startTime,
+                endTime: next.endTime,
+                status:
+                  existingRow.blockedByTimeOffId
+                    ? SlotStatus.BLOCKED
+                    : existingRow.activeCount >= existingRow.capacity
+                    ? SlotStatus.BOOKED
+                    : SlotStatus.AVAILABLE,
+              },
+            });
+
+            appliedDates.push(date);
+            return;
+          }
+
+          // STREAM shrink: update continuous STREAM_WINDOW immediately, keep reduced window available when capacity permits,
+          // and conservatively treat all active appointments on the affected Stream window as potentially affected.
+          const streamAppointments = await tx.appointment.findMany({
+            where: {
+              availabilityId: existingRow.id,
+              status: { in: ELASTIC_ACTIVE_STATUSES },
+            },
+            select: {
+              id: true,
+              status: true,
+              slotStart: true,
+              slotEnd: true,
+              patient: { select: { userId: true } },
+            },
+          });
+
+          const affectedStreamAppointments = identifyAffectedElasticAppointments({
+            operation: "SHRINK",
+            scheduleType: "STREAM",
+            previousRange: {
+              startTime: existingRow.startTime,
+              endTime: existingRow.endTime,
+            },
+            nextRange: next,
+            removedIntervals: diff.removed,
+            appointments: streamAppointments.map((appointment) => ({
+              id: appointment.id,
+              patientUserId: appointment.patient.userId,
+              status: appointment.status,
+              slotStart: appointment.slotStart,
+              slotEnd: appointment.slotEnd,
+            })),
+          });
+
+          if (affectedStreamAppointments.length > 0) {
+            await tx.appointment.updateMany({
+              where: { id: { in: affectedStreamAppointments.map((a) => a.id) } },
+              data: {
+                disruptedAt: now,
+                disruptionReason: affectedStreamAppointments[0]!.disruptionReason,
+                rescheduleStatus: RescheduleLifecycleStatus.PENDING_RESCHEDULING,
+                waveId: null,
+              },
+            });
+
+            for (const appointment of streamAppointments) {
+              if (!appointment.slotStart && !appointment.slotEnd) {
+                await syncAppointmentReminders(tx, {
+                  appointmentId: appointment.id,
+                  userId: appointment.patient.userId,
+                  slotStartTime: next.startTime,
+                  slotEndTime: next.endTime,
+                  status: appointment.status,
+                });
+              }
+            }
+
+            allAffectedAppointments.push(...affectedStreamAppointments);
+          }
+
+          await tx.availability.update({
+            where: { id: existingRow.id },
+            data: {
+              startTime: next.startTime,
+              endTime: next.endTime,
+              status:
+                existingRow.blockedByTimeOffId
+                  ? SlotStatus.BLOCKED
+                  : existingRow.activeCount >= existingRow.capacity
+                  ? SlotStatus.BOOKED
+                  : SlotStatus.AVAILABLE,
+            },
+          });
+
+          appliedDates.push(date);
+        }, { maxWait: 10000, timeout: 20000 });
+      } catch (dateErr) {
+        console.error(`[${operation.toLowerCase()}AvailabilityAction] Date ${date} failed:`, dateErr);
+        failedDates.push(`${date} (transaction error)`);
+      }
+    }
+
+    if (appliedDates.length === 0) {
+      return {
+        success: false,
+        error: `Availability adjustment failed for: ${failedDates.join(", ")}.`,
+        failedDates,
+      };
+    }
+
+    // Synchronize recurring schedule definition only when all intended future dates succeeded without failures
+    const allRemainingFutureDates = scheduleDatesFrom(
+      schedule,
+      schedule.startDate > todayIST ? schedule.startDate : todayIST
+    );
+    const coversAllFutureDates =
+      schedule.recurrence === "ONCE" ||
+      (data.applyToFuture &&
+        failedDates.length === 0 &&
+        allRemainingFutureDates.every((d) => appliedDates.includes(d)));
+
+    if (coversAllFutureDates && failedDates.length === 0) {
+      const deltaMinutes = data.steps * schedule.durationMinutes;
+      let nextStartMinute = schedule.startMinute;
+      let nextEndMinute = schedule.endMinute;
+      if (operation === "SHRINK") {
+        if (data.edge === "START") nextStartMinute += deltaMinutes;
+        else nextEndMinute -= deltaMinutes;
+      } else {
+        if (data.edge === "START") nextStartMinute -= deltaMinutes;
+        else nextEndMinute += deltaMinutes;
+      }
+      if (nextStartMinute >= 0 && nextEndMinute <= 1440 && nextEndMinute > nextStartMinute) {
+        await db.availabilitySchedule.update({
+          where: { id: schedule.id },
+          data: { startMinute: nextStartMinute, endMinute: nextEndMinute },
+        });
+      }
+    }
+
+    // Post-commit: waitlist notifications for expanded slots
+    for (const seat of availableSeats) {
+      await notifyWaitlistAfterSlotRelease(seat.doctorId, seat.startTime);
+    }
+
+    // Post-commit: discover three-level alternatives and dispatch mandatory emails for affected appointments
+    const doctorName = user.name ?? "Practitioner";
+    for (const affected of allAffectedAppointments) {
+      try {
+        const alternatives = await discoverAlternativeAppointmentsForPatient(affected.id);
+        const totalSuggested =
+          alternatives.sameDayAlternatives.length +
+          alternatives.upcomingDateAlternatives.length +
+          alternatives.otherDoctorAlternatives.length;
+
+        await createNotification({
+          userId: affected.patientUserId,
+          type: NotificationType.APPOINTMENT_RESCHEDULED,
+          title: "Action Required: Please Reschedule Your Appointment",
+          body:
+            totalSuggested > 0
+              ? `Dr. ${doctorName} updated their availability. We found ${totalSuggested} alternative slot option(s) for you. Your existing appointment remains protected until resolved.`
+              : `Dr. ${doctorName} updated their availability and no immediate online alternatives are open. Please contact the clinic for assistance; your existing appointment remains protected.`,
+          href: `/book/reschedule/${affected.id}`,
+        });
+
+        const dedupeKey = buildElasticRescheduleDedupeKey({
+          appointmentId: affected.id,
+          operation: affected.operation,
+          originalStartTime: affected.originalStartTime,
+          originalEndTime: affected.originalEndTime,
+          newStartTime: affected.newStartTime,
+          newEndTime: affected.newEndTime,
+        });
+
+        await enqueuePatientNotifications(db, {
+          userId: affected.patientUserId,
+          appointmentId: affected.id,
+          template: "elastic_shrink_reschedule",
+          payload: {
+            appointmentId: affected.id,
+            doctorName,
+            specialization: doctor.specialization,
+            originalStartTime: affected.originalStartTime.toISOString(),
+            originalEndTime: affected.originalEndTime.toISOString(),
+            isStreamWindow: Boolean(affected.isStreamWindow),
+            newStartTime: affected.newStartTime ? affected.newStartTime.toISOString() : undefined,
+            newEndTime: affected.newEndTime ? affected.newEndTime.toISOString() : undefined,
+            operation: affected.operation,
+            disruptionReason: affected.disruptionReason,
+            sameDayAlternatives: alternatives.sameDayAlternatives,
+            upcomingDateAlternatives: alternatives.upcomingDateAlternatives,
+            otherDoctorAlternatives: alternatives.otherDoctorAlternatives,
+          },
+          dedupeKey,
+        });
+
+        if (totalSuggested === 0) {
+          await createNotification({
+            userId: user.id,
+            type: NotificationType.GENERAL,
+            title: "Manual Rescheduling Assistance Needed",
+            body: `An appointment affected by your schedule ${operation.toLowerCase()} has no open online alternatives. The patient's booking remains protected until manually resolved.`,
+            href: "/doctor/appointments",
+          });
+        }
+      } catch (notifErr) {
+        console.error(
+          `[${operation.toLowerCase()}AvailabilityAction] Failed to dispatch notification for appointment ${affected.id}:`,
+          notifErr
+        );
+      }
+    }
+
+    revalidatePath("/doctor/slots");
+    revalidatePath("/doctor/dashboard");
+    revalidatePath("/doctor/appointments");
+    revalidatePath("/doctors");
+    revalidatePath(`/doctors/${doctor.id}`);
+    revalidatePath("/patient/appointments");
+
+    const affectedSuffix =
+      allAffectedAppointments.length > 0
+        ? ` ${allAffectedAppointments.length} affected appointment(s) notified with rescheduling options.`
+        : "";
+    const failedSuffix =
+      failedDates.length > 0 ? ` Skipped/failed: ${failedDates.join(", ")}.` : "";
+
+    return {
+      success: true,
+      appliedDates,
+      failedDates,
+      affectedAppointmentsCount: allAffectedAppointments.length,
+      message: `${operation === "SHRINK" ? "Shrank" : "Expanded"} availability for ${appliedDates.length} date(s).${affectedSuffix}${failedSuffix}`,
+    };
+  }
+
+  export async function shrinkAvailabilityAction(input: ElasticAvailabilityInput) {
+    return elasticAvailabilityAction(input, "SHRINK");
+  }
+
+  export async function expandAvailabilityAction(input: ElasticAvailabilityInput) {
+    return elasticAvailabilityAction(input, "EXPAND");
+  }
+
 export async function blockScheduleDateAction(scheduleId: string, date: string, confirmCancellation = false) {
     const user = await requireRole(Role.DOCTOR);
     const doctor = user.doctor;
@@ -489,7 +1169,7 @@ export async function blockScheduleDateAction(scheduleId: string, date: string, 
     await db.availabilityException.upsert({ where: { scheduleId_date: { scheduleId, date } }, create: { doctorId: doctor.id, scheduleId, date, reason: "Blocked by doctor" }, update: { reason: "Blocked by doctor" } });
     for (const appointment of active) {
       await db.$transaction(async (tx) => {
-        await tx.appointment.update({ where: { id: appointment.appointmentId }, data: { status: AppointmentStatus.CANCELLED, cancelledAt: new Date(), cancelledBy: "DOCTOR", cancellationReason: "Schedule date blocked", waveId: null } });
+        await tx.appointment.update({ where: { id: appointment.appointmentId }, data: { status: AppointmentStatus.CANCELLED, cancelledAt: new Date(), cancelledBy: "DOCTOR", cancellationReason: "Schedule date blocked", waveId: null, rescheduleStatus: null } });
         await releaseSlot(tx, appointment.availabilityId);
       }, { maxWait: 10000, timeout: 20000 });
       if (appointment.paymentId) await requestRefund({ paymentId: appointment.paymentId, appointmentId: appointment.appointmentId, reason: RefundReason.DOCTOR_ABSENCE, note: "Schedule date blocked by doctor; refund initiated" });
@@ -524,7 +1204,7 @@ export async function cancelScheduleAction(scheduleId: string, confirmCancellati
     if (active.length > 0 && !confirmCancellation) return { success: false, requiresConfirmation: true, activeAppointments: active };
     for (const appointment of active) {
       await db.$transaction(async (tx) => {
-        await tx.appointment.update({ where: { id: appointment.appointmentId }, data: { status: AppointmentStatus.CANCELLED, cancelledAt: new Date(), cancelledBy: "DOCTOR", cancellationReason: "Schedule cancelled" } });
+        await tx.appointment.update({ where: { id: appointment.appointmentId }, data: { status: AppointmentStatus.CANCELLED, cancelledAt: new Date(), cancelledBy: "DOCTOR", cancellationReason: "Schedule cancelled", rescheduleStatus: null } });
         await releaseSlot(tx, appointment.availabilityId);
       }, { maxWait: 10000, timeout: 20000 });
       if (appointment.paymentId) await requestRefund({ paymentId: appointment.paymentId, appointmentId: appointment.appointmentId, reason: RefundReason.DOCTOR_ABSENCE, note: "Schedule cancelled by doctor; refund initiated" });

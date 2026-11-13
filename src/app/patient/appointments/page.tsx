@@ -4,7 +4,11 @@ import { requireRole } from "@/lib/auth";
 import { Role, AppointmentStatus } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { getTodayISTDateString, getISTDateString } from "@/lib/time";
-import { effectiveSlot } from "@/lib/scheduling";
+import {
+  effectiveSlot,
+  isEligibleForDisruptedDashboardAlternatives,
+} from "@/lib/scheduling";
+import { discoverAlternativeAppointmentsForPatient } from "@/lib/actions/reschedule";
 import { calculateQueueEstimates, type QueueAppointmentItem } from "@/lib/queue";
 import { AppointmentsView } from "./appointments-view";
 import { toPatientAppointmentDto, type SerializedPatientAppointment } from "@/lib/serializers";
@@ -121,7 +125,27 @@ export default async function PatientAppointmentsPage() {
       }
     }
 
-    const serialized = toPatientAppointmentDto(appt, now, estimate);
+    let suggestedAlternatives = null;
+    if (
+      isEligibleForDisruptedDashboardAlternatives(
+        {
+          status: appt.status,
+          startTime: appointmentSlot.start,
+          disruptedAt: appt.disruptedAt,
+          rescheduleStatus: appt.rescheduleStatus,
+        },
+        now
+      )
+    ) {
+      suggestedAlternatives = await discoverAlternativeAppointmentsForPatient(appt.id, now);
+    }
+
+    const serialized = toPatientAppointmentDto(
+      appt,
+      now,
+      estimate,
+      suggestedAlternatives
+    );
 
     if ((isFuture || isToday) && isActiveStatus) {
       upcoming.push(serialized);

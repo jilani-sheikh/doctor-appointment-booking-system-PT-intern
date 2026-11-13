@@ -131,14 +131,31 @@ export async function deleteAccountAction(input: {
       const patientId = user.patient?.id;
       const doctorId = user.doctor?.id;
       const appointments = await tx.appointment.findMany({
-        where: patientId ? { patientId } : { availability: { doctorId: doctorId! } },
-        select: { id: true, payments: { select: { id: true } }, refunds: { select: { id: true } } },
+        where: patientId
+          ? { patientId }
+          : {
+              OR: [
+                { availability: { doctorId: doctorId! } },
+                { rescheduledFromAvailability: { doctorId: doctorId! } },
+              ],
+            },
+        select: {
+          id: true,
+          availability: { select: { doctorId: true } },
+          payments: { select: { id: true } },
+          refunds: { select: { id: true } },
+        },
       });
       const financialAppointmentIds = appointments
         .filter((appointment) => appointment.payments.length > 0 || appointment.refunds.length > 0)
         .map((appointment) => appointment.id);
       const hardDeleteAppointmentIds = appointments
-        .filter((appointment) => appointment.payments.length === 0 && appointment.refunds.length === 0)
+        .filter(
+          (appointment) =>
+            (patientId || appointment.availability.doctorId === doctorId) &&
+            appointment.payments.length === 0 &&
+            appointment.refunds.length === 0
+        )
         .map((appointment) => appointment.id);
 
       if (hardDeleteAppointmentIds.length > 0) {
@@ -161,9 +178,18 @@ export async function deleteAccountAction(input: {
         await tx.doctorTimeOff.deleteMany({ where: { doctorId } });
         const slots = await tx.availability.findMany({
           where: { doctorId },
-          select: { id: true, appointments: { select: { id: true } } },
+          select: {
+            id: true,
+            appointments: { select: { id: true } },
+            rescheduledAppointments: { select: { id: true } },
+          },
         });
-        const freeSlotIds = slots.filter((slot) => slot.appointments.length === 0).map((slot) => slot.id);
+        const freeSlotIds = slots
+          .filter(
+            (slot) =>
+              slot.appointments.length === 0 && slot.rescheduledAppointments.length === 0
+          )
+          .map((slot) => slot.id);
         if (freeSlotIds.length > 0) await tx.availability.deleteMany({ where: { id: { in: freeSlotIds } } });
         await tx.wave.deleteMany({ where: { doctorId, appointments: { none: {} } } });
       }
