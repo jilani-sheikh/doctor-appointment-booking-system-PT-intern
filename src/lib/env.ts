@@ -60,6 +60,8 @@ const envSchema = z.object({
   ELASTIC_SCHEDULING_TEST_EMAIL: z.string().email().optional(),
   CRON_SECRET: z.string().optional(),
   REMINDER_OFFSETS_MINUTES: z.string().optional(),
+  GEMINI_API_KEY: z.string().min(1).optional(),
+  GEMINI_MODEL: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -371,6 +373,36 @@ export function getReminderOffsetsMinutes(): number[] {
     .map((val) => parseInt(val.trim(), 10))
     .filter((n) => !isNaN(n) && n > 0);
   return parsed.length > 0 ? parsed : DEFAULT_REMINDER_OFFSETS_MINUTES;
+}
+
+/**
+ * Checks whether GEMINI_API_KEY is present in the runtime environment.
+ */
+export function isGeminiConfigured(): boolean {
+  return Boolean(process.env.GEMINI_API_KEY?.trim());
+}
+
+/**
+ * Lazily retrieves the Gemini API key for server-side AI assistant execution.
+ */
+export function getGeminiApiKey(): string {
+  const val = process.env.GEMINI_API_KEY?.trim();
+  if (!val) {
+    throw new Error(
+      "[Medrella Config Error] Missing required environment variable: GEMINI_API_KEY. Set GEMINI_API_KEY in .env.local to use the AI Assistant."
+    );
+  }
+  return val;
+}
+
+export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
+
+/**
+ * Returns the configured Gemini model ID, defaulting to gemini-3.8-flash.
+ */
+export function getGeminiModelId(): string {
+  const val = process.env.GEMINI_MODEL?.trim();
+  return val && val.length > 0 ? val : DEFAULT_GEMINI_MODEL;
 }
 
 /**
