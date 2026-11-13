@@ -149,6 +149,8 @@ model User {
   notifications          Notification[]
   notificationDeliveries NotificationDelivery[]
   passwordResetTokens    PasswordResetToken[]
+  aiConfirmations        AiConfirmation[]
+  aiChatSessions         AiChatSession[]
 
   @@map("users")
 }
@@ -537,4 +539,61 @@ model MaintenanceState {
   lockUntil     DateTime? @map("lock_until")
 
   @@map("maintenance_state")
+}
+
+enum AiConfirmationStatus {
+  PENDING
+  CONSUMING
+  EXECUTED
+  FAILED
+}
+
+model AiConfirmation {
+  id          String               @id @default(cuid())
+  userId      String               @map("user_id")
+  role        Role
+  action      String
+  payloadHash String               @map("payload_hash")
+  expiresAt   DateTime             @map("expires_at")
+  consumedAt  DateTime?            @map("consumed_at")
+  status      AiConfirmationStatus @default(PENDING)
+  error       String?              @db.Text
+  createdAt   DateTime             @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, expiresAt])
+  @@index([expiresAt])
+  @@map("ai_confirmations")
+}
+
+model AiChatSession {
+  id        String          @id @default(cuid())
+  userId    String          @map("user_id")
+  role      Role
+  title     String
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages AiChatMessage[]
+
+  @@index([userId, role, updatedAt])
+  @@map("ai_chat_sessions")
+}
+
+model AiChatMessage {
+  id            String        @id @default(cuid())
+  sessionId     String        @map("session_id")
+  role          String
+  content       String        @db.Text
+  cards         Json?
+  confirmations Json?
+  isError       Boolean       @default(false) @map("is_error")
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  session AiChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@map("ai_chat_messages")
 }

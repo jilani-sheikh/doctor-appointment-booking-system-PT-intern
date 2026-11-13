@@ -3,7 +3,8 @@ import "./globals.css";
 import { Navbar } from "@/components/layout/navbar";
 import { Footer } from "@/components/layout/footer";
 import { Toaster } from "@/components/ui/sonner";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, isProfileComplete } from "@/lib/auth";
+import { FloatingAssistant } from "@/components/ai-assistant/FloatingAssistant";
 import { toNavUser, toNotificationDto, type SerializedNotification } from "@/lib/serializers";
 import { isDatabaseConfigured } from "@/lib/env";
 import { db } from "@/lib/db";
@@ -24,12 +25,24 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   let user = null;
+  let assistantUser: { role: "PATIENT" | "DOCTOR"; displayName: string } | null = null;
   let unreadNotificationsCount = 0;
   let recentNotifications: SerializedNotification[] = [];
 
   try {
     const currentUser = await getCurrentUser();
     user = toNavUser(currentUser);
+
+    if (
+      currentUser &&
+      isProfileComplete(currentUser) &&
+      (currentUser.role === "PATIENT" || currentUser.role === "DOCTOR")
+    ) {
+      assistantUser = {
+        role: currentUser.role,
+        displayName: currentUser.name || (currentUser.role === "DOCTOR" ? "Doctor" : "Patient"),
+      };
+    }
 
     if (user && isDatabaseConfigured()) {
       scheduleOpportunisticMaintenance();
@@ -65,6 +78,12 @@ export default async function RootLayout({
         />
         <main className="flex-1 flex flex-col">{children}</main>
         <Footer />
+        {assistantUser && (
+          <FloatingAssistant
+            role={assistantUser.role}
+            displayName={assistantUser.displayName}
+          />
+        )}
         <Toaster position="top-right" richColors />
       </body>
     </html>
