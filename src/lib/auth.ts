@@ -8,6 +8,14 @@ import { getAuthSecret, isAdminEmail, isDatabaseConfigured } from "@/lib/env";
 import { signInSchema } from "@/lib/validations/auth";
 import { Role, type User as PrismaUser, type Patient, type Doctor } from "@/generated/prisma/client";
 import { redirect, unstable_rethrow } from "next/navigation";
+import {
+  evaluateRoleRouteAccess,
+  getPostLoginRedirectForUser,
+  getRoleDashboardPath,
+  isProfileCompleteForUser,
+} from "@/lib/role-routing";
+
+export { getRoleDashboardPath };
 
 // Constant-time dummy hash for timing-attack defense on unknown emails (bcrypt cost 12)
 const DUMMY_HASH = "$2b$12$W7cZLbg2wRkIqumErxXbheoBLT3Q72qRXCr4u0u1iXb5GY1y2VKQK";
@@ -94,6 +102,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           select: { passwordChangedAt: true },
         });
         token.passwordChangedAt = current?.passwordChangedAt?.toISOString() ?? null;
+      } else if (typeof token.id === "string" && isDatabaseConfigured()) {
+        try {
+          const current = await db.user.findUnique({
+            where: { id: token.id, deletedAt: null },
+            select: { role: true },
+          });
+          token.role = current?.role ?? null;
+        } catch {
+          // Retain prior JWT role claim if transient DB check fails.
+        }
       }
       return token;
     },
@@ -130,32 +148,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
 /**
  * Checks whether a user's role and corresponding profile are fully initialized.
- * ADMIN has no profile table and is considered complete once role is ADMIN.
+ * ADMIN and RECEPTIONIST have no separate profile table and are complete once assigned.
  */
 export function isProfileComplete(user: CurrentUser | null): boolean {
-  if (!user || !user.role) return false;
-  if (user.role === Role.ADMIN) return true;
-  if (user.role === Role.PATIENT) return Boolean(user.patient);
-  if (user.role === Role.DOCTOR) return Boolean(user.doctor);
-  return false;
+  return isProfileCompleteForUser(user);
 }
 
 /**
  * Determines the target dashboard or onboarding route based on current user state.
  */
 export function getPostLoginRedirect(user: CurrentUser | null): string {
-  if (!user) return "/sign-in";
-  if (!user.role || !isProfileComplete(user)) return "/onboarding";
-  switch (user.role) {
-    case Role.PATIENT:
-      return "/patient/dashboard";
-    case Role.DOCTOR:
-      return "/doctor/dashboard";
-    case Role.ADMIN:
-      return "/admin/dashboard";
-    default:
-      return "/onboarding";
-  }
+  return getPostLoginRedirectForUser(user);
 }
 
 /**
@@ -226,12 +229,9 @@ export async function requireUser(): Promise<CurrentUser> {
 export async function requireRole(...roles: Role[]): Promise<CurrentUser> {
   const user = await requireUser();
 
-  if (!user.role || !isProfileComplete(user)) {
-    redirect("/onboarding");
-  }
-
-  if (!roles.includes(user.role)) {
-    redirect(getPostLoginRedirect(user));
+  const decision = evaluateRoleRouteAccess(user, roles);
+  if (!decision.allowed) {
+    redirect(decision.redirectTo);
   }
 
   return user;
