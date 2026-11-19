@@ -10,10 +10,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import {
   Calendar,
-  CheckCircle2,
   Clock,
   Ban,
-  UserX,
   Phone,
   User,
   FileText,
@@ -52,16 +50,9 @@ export function DoctorAppointmentsView({
 
   const handleStatusChange = (
     appointmentId: string,
-    targetStatus: "CANCELLED" | "COMPLETED" | "NO_SHOW"
+    targetStatus: "CANCELLED"
   ) => {
-    const actionLabel =
-      targetStatus === "CANCELLED"
-        ? "cancel this appointment and free the slot"
-        : targetStatus === "COMPLETED"
-        ? "mark this consultation as completed"
-        : "record this as a no-show";
-
-    if (!confirm(`Are you sure you want to ${actionLabel}?`)) return;
+    if (!confirm("Are you sure you want to cancel this appointment and free the slot?")) return;
 
     startTransition(async () => {
       const res = await updateDoctorAppointmentStatusAction(appointmentId, targetStatus);
@@ -81,6 +72,8 @@ export function DoctorAppointmentsView({
         return <Badge variant="success" className="text-[10px] uppercase">Confirmed</Badge>;
       case "CHECKED_IN":
         return <Badge variant="default" className="text-[10px] uppercase bg-blue-600 text-white">Checked In</Badge>;
+      case "CALLED":
+        return <Badge variant="default" className="text-[10px] uppercase bg-indigo-600 text-white animate-pulse">Called</Badge>;
       case "IN_CONSULTATION":
         return <Badge variant="default" className="text-[10px] uppercase bg-amber-600 text-white animate-pulse">In Consultation</Badge>;
       case "COMPLETED":
@@ -150,58 +143,29 @@ export function DoctorAppointmentsView({
 
             {/* Actions based on transition table */}
             <div className="flex flex-wrap items-center gap-2 shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-border">
-              {(appt.status === "CHECKED_IN" || appt.status === "IN_CONSULTATION") && (
+              {(appt.status === "CHECKED_IN" || appt.status === "CALLED" || appt.status === "IN_CONSULTATION") && (
                 <Link href="/doctor/queue">
                   <Button
                     variant="default"
                     size="xs"
                     className="bg-primary hover:bg-primary/90 text-primary-foreground gap-1"
                   >
-                    Manage in Live Queue &rarr;
+                    View Live Queue &rarr;
                   </Button>
                 </Link>
               )}
 
-              {appt.status === "CONFIRMED" && (
-                <>
-                  <Button
-                    variant="default"
-                    size="xs"
-                    disabled={isPending}
-                    onClick={() => handleStatusChange(appt.id, "COMPLETED")}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
-                  >
-                    <CheckCircle2 className="h-3 w-3" />
-                    Complete
-                  </Button>
-
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    disabled={isPending || !appt.isPastStartTime}
-                    title={
-                      !appt.isPastStartTime
-                        ? "No-Show can only be marked after consultation start time"
-                        : "Mark patient as No-Show"
-                    }
-                    onClick={() => handleStatusChange(appt.id, "NO_SHOW")}
-                    className="text-rose-600 border-rose-300 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/20 gap-1 text-xs"
-                  >
-                    <UserX className="h-3 w-3" />
-                    No Show
-                  </Button>
-
-                  <Button
-                    variant="destructive"
-                    size="xs"
-                    disabled={isPending}
-                    onClick={() => handleStatusChange(appt.id, "CANCELLED")}
-                    className="gap-1"
-                  >
-                    <Ban className="h-3 w-3" />
-                    Cancel
-                  </Button>
-                </>
+              {(appt.status === "CONFIRMED" || appt.status === "CHECKED_IN" || appt.status === "CALLED") && (
+                <Button
+                  variant="destructive"
+                  size="xs"
+                  disabled={isPending}
+                  onClick={() => handleStatusChange(appt.id, "CANCELLED")}
+                  className="gap-1"
+                >
+                  <Ban className="h-3 w-3" />
+                  Cancel
+                </Button>
               )}
             </div>
           </div>

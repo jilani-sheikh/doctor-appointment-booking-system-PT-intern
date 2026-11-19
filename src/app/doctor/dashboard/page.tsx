@@ -73,6 +73,7 @@ export default async function DoctorDashboardPage() {
         (appt.status === AppointmentStatus.PENDING ||
           appt.status === AppointmentStatus.CONFIRMED ||
           appt.status === AppointmentStatus.CHECKED_IN ||
+          appt.status === AppointmentStatus.CALLED ||
           appt.status === AppointmentStatus.IN_CONSULTATION)
       ) {
         upcomingTotalCount++;

@@ -120,6 +120,7 @@ export function computeDoctorAppointmentStats(
       case AppointmentStatus.CHECKED_IN:
         stats.checkedIn += 1;
         break;
+      case AppointmentStatus.CALLED:
       case AppointmentStatus.IN_CONSULTATION:
         stats.inConsultation += 1;
         break;

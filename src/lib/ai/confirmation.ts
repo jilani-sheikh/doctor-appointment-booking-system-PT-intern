@@ -192,13 +192,12 @@ async function dispatchBoundAction(
       const data = confirmPayloadSchemas.DOCTOR_CANCEL_APPOINTMENT.parse(rawPayload);
       return await updateDoctorAppointmentStatusAction(data.appointmentId, "CANCELLED");
     }
-    case "DOCTOR_COMPLETE_APPOINTMENT": {
-      const data = confirmPayloadSchemas.DOCTOR_COMPLETE_APPOINTMENT.parse(rawPayload);
-      return await updateDoctorAppointmentStatusAction(data.appointmentId, "COMPLETED");
-    }
+    case "DOCTOR_COMPLETE_APPOINTMENT":
     case "DOCTOR_MARK_NO_SHOW": {
-      const data = confirmPayloadSchemas.DOCTOR_MARK_NO_SHOW.parse(rawPayload);
-      return await updateDoctorAppointmentStatusAction(data.appointmentId, "NO_SHOW");
+      return {
+        success: false,
+        error: "Queue completion and Not Arrived outcomes are managed exclusively by the Reception Desk.",
+      };
     }
     case "DOCTOR_RESCHEDULE_APPOINTMENT": {
       const data = confirmPayloadSchemas.DOCTOR_RESCHEDULE_APPOINTMENT.parse(rawPayload);

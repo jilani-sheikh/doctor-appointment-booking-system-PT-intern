@@ -9,10 +9,7 @@ import {
   PaymentStatus,
   RefundReason,
 } from "@/generated/prisma/client";
-import {
-  isValidTransition,
-  canDoctorNoShow,
-} from "@/lib/appointment-status";
+import { isValidTransition } from "@/lib/appointment-status";
 import { releaseSlot, notifyWaitlistAfterSlotRelease } from "@/lib/slots";
 import { createNotification } from "@/lib/notifications";
 import { enqueuePatientNotifications } from "@/lib/notifications/index";
@@ -23,25 +20,32 @@ import { revalidatePath } from "next/cache";
 import { effectiveSlot } from "@/lib/scheduling";
 
 /**
- * Transitions appointment status for doctor workflows.
+ * Transitions appointment status for doctor scheduling workflows (cancellation only).
  *
  * Enforces:
  * - Doctor authentication and ownership of the appointment
+ * - Rejects queue/consultation mutations (Check In, Call Next, Start Consultation, Completed, No-Show)
  * - State machine validity via isValidTransition
- * - Timing constraint for NO_SHOW via canDoctorNoShow (>= 15 mins after start)
  * - Releases slots using shared releaseSlot helper on cancellation
  * - Triggers 100% refund if a payment was attached
  * - Synchronizes reminders and sends patient notifications
  */
 export async function updateDoctorAppointmentStatusAction(
   appointmentId: string,
-  targetStatus: "CANCELLED" | "COMPLETED" | "NO_SHOW"
+  targetStatus: "CANCELLED"
 ) {
   const user = await requireRole(Role.DOCTOR);
   const doctor = user.doctor;
 
   if (!doctor) {
     return { success: false, error: "Doctor profile not found." };
+  }
+
+  if (targetStatus !== "CANCELLED") {
+    return {
+      success: false,
+      error: "Unauthorized: Consultation queue outcomes are managed exclusively by the Reception Desk.",
+    };
   }
 
   const appointment = await db.appointment.findUnique({
@@ -73,17 +77,6 @@ export async function updateDoctorAppointmentStatusAction(
       success: false,
       error: `Transition from ${current} to ${targetStatus} is not permitted for doctor role.`,
     };
-  }
-
-  // Timing check for No-Show
-  if (targetStatus === "NO_SHOW") {
-    const noShowEval = canDoctorNoShow(
-      { status: current, startTime: appointmentSlot.start },
-      now
-    );
-    if (!noShowEval.allowed) {
-      return { success: false, error: noShowEval.reason ?? "Cannot mark No-Show at this time." };
-    }
   }
 
   try {
@@ -168,44 +161,12 @@ export async function updateDoctorAppointmentStatusAction(
       if (newlyFreedSlot) {
         await notifyWaitlistAfterSlotRelease(doctor.id, freedSlotStartTime);
       }
-    } else if (targetStatus === "COMPLETED") {
-      await db.$transaction(async (tx) => {
-        await tx.appointment.update({
-          where: { id: appointmentId },
-          data: {
-            status: AppointmentStatus.COMPLETED,
-            actualEndAt: now,
-          },
-        });
-
-        await syncAppointmentReminders(tx, {
-          appointmentId,
-          userId: appointment.patient.userId,
-          slotStartTime: appointmentSlot.start,
-          status: AppointmentStatus.COMPLETED,
-        });
-      });
-    } else if (targetStatus === "NO_SHOW") {
-      await db.$transaction(async (tx) => {
-        await tx.appointment.update({
-          where: { id: appointmentId },
-          data: {
-            status: AppointmentStatus.NO_SHOW,
-          },
-        });
-
-        await syncAppointmentReminders(tx, {
-          appointmentId,
-          userId: appointment.patient.userId,
-          slotStartTime: appointmentSlot.start,
-          status: AppointmentStatus.NO_SHOW,
-        });
-      });
     }
 
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/queue");
     revalidatePath("/doctor/dashboard");
+    revalidatePath("/receptionist");
     revalidatePath("/patient/appointments");
     revalidatePath("/patient/dashboard");
     revalidatePath("/patient/payments");
