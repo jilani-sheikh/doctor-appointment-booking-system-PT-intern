@@ -7,7 +7,7 @@ import { signInAction, signOutAction } from "@/lib/actions/auth";
 import { DeleteProfileDialog } from "@/components/auth/delete-profile-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { LogIn, LogOut, LayoutDashboard, Shield, Stethoscope, User as UserIcon, Loader2 } from "lucide-react";
+import { LogIn, LogOut, LayoutDashboard, Shield, Stethoscope, User as UserIcon, Loader2, ClipboardCheck } from "lucide-react";
 import type { NavUser } from "@/lib/serializers";
 
 interface AuthButtonProps {
@@ -126,6 +126,8 @@ export function AuthButton({ user }: AuthButtonProps) {
       ? "/doctor/dashboard"
       : user.role === "ADMIN"
       ? "/admin/dashboard"
+      : user.role === "RECEPTIONIST"
+      ? "/receptionist"
       : "/onboarding";
 
   const roleLabel =
@@ -135,6 +137,8 @@ export function AuthButton({ user }: AuthButtonProps) {
       ? "Doctor"
       : user.role === "ADMIN"
       ? "Administrator"
+      : user.role === "RECEPTIONIST"
+      ? "Receptionist"
       : "Incomplete Profile";
 
   return (
@@ -176,6 +180,7 @@ export function AuthButton({ user }: AuthButtonProps) {
                 {user.role === "ADMIN" && <Shield className="h-3 w-3" />}
                 {user.role === "DOCTOR" && <Stethoscope className="h-3 w-3" />}
                 {user.role === "PATIENT" && <UserIcon className="h-3 w-3" />}
+                {user.role === "RECEPTIONIST" && <ClipboardCheck className="h-3 w-3" />}
                 {roleLabel}
               </span>
             </div>
