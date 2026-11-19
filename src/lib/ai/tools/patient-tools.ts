@@ -140,6 +140,7 @@ export function createPatientTools(ctx: PatientToolContext) {
             const isActive =
               appt.status === AppointmentStatus.CONFIRMED ||
               appt.status === AppointmentStatus.CHECKED_IN ||
+              appt.status === AppointmentStatus.CALLED ||
               appt.status === AppointmentStatus.IN_CONSULTATION ||
               appt.status === AppointmentStatus.PENDING_PAYMENT;
             return isActive && window.end >= now;
@@ -207,6 +208,7 @@ export function createPatientTools(ctx: PatientToolContext) {
               appt.status === AppointmentStatus.PENDING_PAYMENT ||
               cancelCheck.allowed,
             canReschedule: rescheduleCheck.allowed,
+            tokenNumber: appt.tokenNumber,
             availabilityId: appt.availability.id,
             notes: appt.reason,
           };
@@ -683,6 +685,7 @@ export function createPatientTools(ctx: PatientToolContext) {
               in: [
                 AppointmentStatus.CONFIRMED,
                 AppointmentStatus.CHECKED_IN,
+                AppointmentStatus.CALLED,
                 AppointmentStatus.PENDING_PAYMENT,
               ],
             },
@@ -695,7 +698,8 @@ export function createPatientTools(ctx: PatientToolContext) {
         const futureConfirmedOrCheckedIn = activeUpcoming.filter(
           (a) =>
             (a.status === AppointmentStatus.CONFIRMED ||
-              a.status === AppointmentStatus.CHECKED_IN) &&
+              a.status === AppointmentStatus.CHECKED_IN ||
+              a.status === AppointmentStatus.CALLED) &&
             effectiveSlot(a).start >= now
         );
         if (
@@ -713,6 +717,7 @@ export function createPatientTools(ctx: PatientToolContext) {
             a.availability.doctorId === slot.doctorId &&
             (a.status === AppointmentStatus.CONFIRMED ||
               a.status === AppointmentStatus.CHECKED_IN ||
+              a.status === AppointmentStatus.CALLED ||
               (a.status === AppointmentStatus.PENDING_PAYMENT &&
                 a.holdExpiresAt &&
                 a.holdExpiresAt > now)) &&

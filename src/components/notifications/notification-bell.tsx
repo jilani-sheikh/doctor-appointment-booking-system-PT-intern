@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Bell, Clock, ExternalLink } from "lucide-react";
@@ -31,17 +31,46 @@ export function NotificationBell({
 }: NotificationBellProps) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(initialCount);
-  const [notifications, setNotifications] = useState(initialItems);
+  const [locallyReadIds, setLocallyReadIds] = useState<Set<string>>(() => new Set());
+  const [markedAllAtMs, setMarkedAllAtMs] = useState<number | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  const notifications = useMemo(
+    () =>
+      initialItems.map((n) => {
+        const createdMs = new Date(n.createdAt).getTime();
+        const isOptimisticallyRead =
+          locallyReadIds.has(n.id) ||
+          (markedAllAtMs !== null && createdMs <= markedAllAtMs);
+        return isOptimisticallyRead && !n.readAt
+          ? { ...n, readAt: "read" }
+          : n;
+      }),
+    [initialItems, locallyReadIds, markedAllAtMs]
+  );
+
+  const unreadCount = useMemo(() => {
+    if (markedAllAtMs !== null) {
+      const newerUnread = initialItems.filter(
+        (n) => !n.readAt && new Date(n.createdAt).getTime() > markedAllAtMs && !locallyReadIds.has(n.id)
+      ).length;
+      return newerUnread;
+    }
+    const localDelta = initialItems.filter(
+      (n) => !n.readAt && locallyReadIds.has(n.id)
+    ).length;
+    return Math.max(0, initialCount - localDelta);
+  }, [initialCount, initialItems, locallyReadIds, markedAllAtMs]);
 
   const handleMarkOneRead = (id: string, href?: string | null) => {
     startTransition(async () => {
       await markNotificationReadAction(id);
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === id ? { ...n, readAt: new Date().toISOString() } : n))
-      );
-      setUnreadCount((c) => Math.max(0, c - 1));
+      setLocallyReadIds((prev) => {
+        const next = new Set(prev);
+        next.add(id);
+        return next;
+      });
+      router.refresh();
       if (href) {
         setIsOpen(false);
         router.push(href);
@@ -52,10 +81,8 @@ export function NotificationBell({
   const handleMarkAllRead = () => {
     startTransition(async () => {
       await markAllNotificationsReadAction();
-      setNotifications((prev) =>
-        prev.map((n) => ({ ...n, readAt: new Date().toISOString() }))
-      );
-      setUnreadCount(0);
+      setMarkedAllAtMs(Date.now());
+      router.refresh();
     });
   };
 

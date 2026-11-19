@@ -24,6 +24,7 @@ import { HOLD_MINUTES } from "@/lib/constants";
 import { formatSlotDateTimeRangeIST } from "@/lib/time";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
 import { effectiveSlot } from "@/lib/scheduling";
+import { allocateSubSlotToken } from "@/lib/queue-tokens";
 
 export interface BookWithPaymentInput {
   patientId: string;
@@ -388,6 +389,31 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
   // 1. Transactional state change: PENDING_PAYMENT or PENDING -> CONFIRMED
   const updateResult = await db.$transaction(
     async (tx) => {
+      // Serialize state check + token issuance cleanly per appointment
+      const lockedRows = await tx.$queryRaw<
+        Array<{
+          id: string;
+          status: AppointmentStatus;
+          availability_id: string;
+          token_number: number | null;
+          queue_scope_key: string | null;
+        }>
+      >`
+        SELECT "id", "status", "availability_id", "token_number", "queue_scope_key"
+        FROM "appointments"
+        WHERE "id" = ${appointmentId}
+        FOR UPDATE
+      `;
+
+      const locked = lockedRows[0];
+      if (
+        !locked ||
+        (locked.status !== AppointmentStatus.PENDING_PAYMENT &&
+          locked.status !== AppointmentStatus.PENDING)
+      ) {
+        return false;
+      }
+
       // Find matching published wave if capacity remains
       const matchingWave = await tx.wave.findFirst({
         where: {
@@ -412,6 +438,11 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
         );
       }
 
+      const tokenAllocation =
+        locked.token_number !== null && locked.queue_scope_key
+          ? { tokenNumber: locked.token_number, queueScopeKey: locked.queue_scope_key }
+          : await allocateSubSlotToken(tx, locked.availability_id);
+
       // Conditional updateMany to guarantee single execution
       const updated = await tx.appointment.updateMany({
         where: {
@@ -422,6 +453,8 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
           status: AppointmentStatus.CONFIRMED,
           waveId: waveIdToAssign,
           holdExpiresAt: null,
+          tokenNumber: tokenAllocation.tokenNumber,
+          queueScopeKey: tokenAllocation.queueScopeKey,
         },
       });
 
@@ -534,6 +567,7 @@ export async function finalizeConfirmedAppointment(appointmentId: string): Promi
     revalidatePath("/doctor/dashboard");
     revalidatePath("/doctor/queue");
     revalidatePath("/doctor/arrival-windows");
+    revalidatePath("/receptionist");
   } catch {
     // Ignore revalidate errors in non-request contexts
   }

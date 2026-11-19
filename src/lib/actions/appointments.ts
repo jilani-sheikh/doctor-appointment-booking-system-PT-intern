@@ -31,6 +31,7 @@ import { bookWithPaymentHold, requestRefund } from "@/lib/payments/service";
 import { revalidatePath } from "next/cache";
 import { scheduleOpportunisticMaintenance } from "@/lib/maintenance";
 import { effectiveSlot } from "@/lib/scheduling";
+import { allocateSubSlotToken } from "@/lib/queue-tokens";
 
 /**
  * Books an appointment for a patient.
@@ -121,6 +122,8 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
         in: [
           AppointmentStatus.CONFIRMED,
           AppointmentStatus.CHECKED_IN,
+          AppointmentStatus.CALLED,
+          AppointmentStatus.IN_CONSULTATION,
           AppointmentStatus.PENDING,
           AppointmentStatus.PENDING_PAYMENT,
         ],
@@ -150,6 +153,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
         in: [
           AppointmentStatus.CONFIRMED,
           AppointmentStatus.CHECKED_IN,
+          AppointmentStatus.CALLED,
           AppointmentStatus.IN_CONSULTATION,
           AppointmentStatus.PENDING,
           AppointmentStatus.PENDING_PAYMENT,
@@ -271,7 +275,10 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
           );
         }
 
-        // 3. Create Appointment record with status CONFIRMED directly
+        // 3. Allocate sequential persisted sub-slot token inside the transaction
+        const { tokenNumber, queueScopeKey } = await allocateSubSlotToken(tx, availabilityId);
+
+        // 4. Create Appointment record with status CONFIRMED directly
         const appt = await tx.appointment.create({
           data: {
             patientId,
@@ -279,6 +286,8 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
             reason,
             stream: stream as VisitStream,
             status: AppointmentStatus.CONFIRMED,
+            tokenNumber,
+            queueScopeKey,
             waveId: waveIdToAssign,
             slotStart: slot.kind !== "STREAM_WINDOW" && intervalStart ? new Date(intervalStart) : undefined,
             slotEnd: slot.kind !== "STREAM_WINDOW" && intervalStart
@@ -348,6 +357,7 @@ export async function bookAppointmentAction(input: BookAppointmentInput) {
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/dashboard");
     revalidatePath("/doctor/queue");
+    revalidatePath("/receptionist");
     revalidatePath("/doctor/slots");
     revalidatePath("/doctor/arrival-windows");
 
@@ -541,6 +551,8 @@ export async function cancelPatientAppointmentAction(appointmentId: string) {
     revalidatePath("/patient/payments");
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/dashboard");
+    revalidatePath("/doctor/queue");
+    revalidatePath("/receptionist");
     revalidatePath("/doctor/slots");
     revalidatePath(`/doctors/${doctorId}`);
 

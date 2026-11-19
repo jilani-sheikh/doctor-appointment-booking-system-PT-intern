@@ -15,9 +15,11 @@ import {
 } from "@/lib/scheduling";
 import { discoverAlternativeAppointmentsForPatient } from "@/lib/actions/reschedule";
 import { DisruptedAlternativeSelector } from "@/components/patient/disrupted-alternative-selector";
-import { calculateQueueEstimates, EMERGENCY_DISCLAIMER, type QueueAppointmentItem } from "@/lib/queue";
+import { calculateSubSlotQueues, EMERGENCY_DISCLAIMER, type SubSlotQueueItem } from "@/lib/queue";
+import { buildSubSlotQueueScopeKey, formatSubSlotLabel } from "@/lib/queue-tokens";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
 import { DeleteProfileDialog } from "@/components/auth/delete-profile-dialog";
+import { LiveQueueRefresh } from "@/components/patient/live-queue-refresh";
 
 export const metadata: Metadata = {
   title: "Patient Dashboard — Medrella",
@@ -75,6 +77,7 @@ export default async function PatientDashboardPage() {
       a.status === AppointmentStatus.PENDING ||
       a.status === AppointmentStatus.CONFIRMED ||
       a.status === AppointmentStatus.CHECKED_IN ||
+      a.status === AppointmentStatus.CALLED ||
       a.status === AppointmentStatus.IN_CONSULTATION;
     return isFutureOrToday && isActive;
   });
@@ -116,19 +119,39 @@ export default async function PatientDashboardPage() {
 
   let todayQueueEstimate = null;
   if (todayActiveAppt) {
-    const docAppts = await db.appointment.findMany({
+    const siblingAppts = await db.appointment.findMany({
       where: {
-        availability: { doctorId: todayActiveAppt.availability.doctorId },
+        availabilityId: todayActiveAppt.availabilityId,
+        status: { not: AppointmentStatus.PENDING_PAYMENT },
       },
-      include: { availability: true },
-      orderBy: { availability: { startTime: "asc" } },
+      select: {
+        id: true,
+        availabilityId: true,
+        queueScopeKey: true,
+        tokenNumber: true,
+        status: true,
+        slotStart: true,
+        slotEnd: true,
+        actualStartAt: true,
+        actualEndAt: true,
+        checkedInAt: true,
+        calledAt: true,
+        createdAt: true,
+        availability: {
+          select: {
+            doctorId: true,
+            startTime: true,
+            endTime: true,
+          },
+        },
+      },
     });
 
-    const todayDocAppts = docAppts.filter(
+    const todaySubSlotAppts = siblingAppts.filter(
       (a) => getISTDateString(effectiveSlot(a).start) === todayISTStr
     );
 
-    const queueItems: QueueAppointmentItem[] = todayDocAppts.map((a) => ({
+    const queueItems: SubSlotQueueItem[] = todaySubSlotAppts.map((a) => ({
       id: a.id,
       status: a.status,
       scheduledStart: effectiveSlot(a).start,
@@ -136,14 +159,25 @@ export default async function PatientDashboardPage() {
       actualStartAt: a.actualStartAt,
       actualEndAt: a.actualEndAt,
       checkedInAt: a.checkedInAt,
+      calledAt: a.calledAt,
+      tokenNumber: a.tokenNumber,
+      createdAt: a.createdAt,
+      queueScopeKey:
+        a.queueScopeKey ??
+        buildSubSlotQueueScopeKey({
+          doctorId: a.availability.doctorId,
+          startTime: a.availability.startTime,
+          availabilityId: a.availabilityId,
+        }),
     }));
 
-    const estimates = calculateQueueEstimates(queueItems, now);
+    const { estimates } = calculateSubSlotQueues(queueItems, now);
     todayQueueEstimate = estimates.get(todayActiveAppt.id) ?? null;
   }
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-8 space-y-8">
+      {todayActiveAppt && <LiveQueueRefresh intervalMs={15000} />}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
         <div>
@@ -211,6 +245,16 @@ export default async function PatientDashboardPage() {
                   <span className="font-medium text-foreground">
                     Scheduled: {formatSlotRange(effectiveSlot(todayActiveAppt).start, effectiveSlot(todayActiveAppt).end)}
                   </span>
+                  <span>•</span>
+                  <span className="font-medium text-primary/90">
+                    {formatSubSlotLabel({
+                      kind: todayActiveAppt.availability.kind,
+                      availabilityStart: todayActiveAppt.availability.startTime,
+                      availabilityEnd: todayActiveAppt.availability.endTime,
+                      slotStart: todayActiveAppt.slotStart,
+                      slotEnd: todayActiveAppt.slotEnd,
+                    })}
+                  </span>
                   {todayActiveAppt.wave && todayActiveAppt.wave.status === "PUBLISHED" && (
                     <>
                       <span>•</span>
@@ -222,19 +266,28 @@ export default async function PatientDashboardPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {typeof todayActiveAppt.tokenNumber === "number" && (
+                  <Badge className="bg-primary text-primary-foreground text-xs font-bold">
+                    Token #{todayActiveAppt.tokenNumber}
+                  </Badge>
+                )}
                 <Badge
                   variant={
                     todayActiveAppt.status === "CHECKED_IN"
                       ? "warning"
-                      : todayActiveAppt.status === "IN_CONSULTATION"
+                      : todayActiveAppt.status === "CALLED" || todayActiveAppt.status === "IN_CONSULTATION"
                       ? "default"
                       : "success"
                   }
-                  className="text-xs uppercase font-semibold"
+                  className={`text-xs uppercase font-semibold ${
+                    todayActiveAppt.status === "CALLED" ? "bg-indigo-600 text-white animate-pulse" : ""
+                  }`}
                 >
                   {todayActiveAppt.status === "CHECKED_IN"
                     ? "Arrived / Waiting"
+                    : todayActiveAppt.status === "CALLED"
+                    ? "Called — Proceed Now"
                     : todayActiveAppt.status === "IN_CONSULTATION"
                     ? "In Consultation"
                     : todayActiveAppt.status}
@@ -242,11 +295,38 @@ export default async function PatientDashboardPage() {
               </div>
             </div>
 
+            {todayActiveAppt.status === "CALLED" && (
+              <div className="p-3 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-300 dark:border-indigo-700 text-xs text-indigo-950 dark:text-indigo-100 font-medium">
+                You have been called by Reception Desk for Dr. {todayActiveAppt.availability.doctor.user.name}
+                {typeof todayActiveAppt.tokenNumber === "number" ? ` (Token #${todayActiveAppt.tokenNumber})` : ""}. Please proceed to the consultation room.
+              </div>
+            )}
+
             {todayQueueEstimate && (
-              <div className="p-3 rounded-lg bg-card border border-border flex items-center gap-4 text-xs flex-wrap">
+              <div className="p-3 rounded-lg bg-card border border-border flex items-center gap-3 text-xs flex-wrap">
                 <span className="font-semibold text-foreground">
-                  Queue Position: #{todayQueueEstimate.queuePosition}
+                  {typeof todayActiveAppt.tokenNumber === "number"
+                    ? `Token #${todayActiveAppt.tokenNumber}`
+                    : "Token Pending"}
                 </span>
+                <span>•</span>
+                <span className="font-semibold text-foreground">
+                  {todayActiveAppt.status === "CALLED"
+                    ? "Called for consultation"
+                    : `Queue Position: #${todayQueueEstimate.queuePosition}`}
+                </span>
+                <span>•</span>
+                <span>
+                  Status: <strong className="text-foreground">{todayActiveAppt.status}</strong>
+                </span>
+                {todayActiveAppt.checkedInAt && (
+                  <>
+                    <span>•</span>
+                    <span className="text-emerald-700 dark:text-emerald-400 font-medium">
+                      Checked In at {formatTimeIST(todayActiveAppt.checkedInAt)}
+                    </span>
+                  </>
+                )}
                 <span>•</span>
                 <span>
                   Est. Start: <strong>{formatTimeIST(todayQueueEstimate.expectedStart)}</strong>
@@ -366,12 +446,19 @@ export default async function PatientDashboardPage() {
                         </p>
                       </div>
 
-                      <Badge
-                        variant={nextAppointment.status === "CONFIRMED" ? "success" : "warning"}
-                        className="text-[10px] uppercase"
-                      >
-                        {nextAppointment.status}
-                      </Badge>
+                      <div className="flex items-center gap-1.5">
+                        {typeof nextAppointment.tokenNumber === "number" && (
+                          <Badge className="bg-primary text-primary-foreground text-[10px] font-bold">
+                            Token #{nextAppointment.tokenNumber}
+                          </Badge>
+                        )}
+                        <Badge
+                          variant={nextAppointment.status === "CONFIRMED" ? "success" : "warning"}
+                          className="text-[10px] uppercase"
+                        >
+                          {nextAppointment.status}
+                        </Badge>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2 text-xs text-foreground font-semibold pt-1">
