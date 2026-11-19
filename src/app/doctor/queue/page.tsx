@@ -73,7 +73,14 @@ export default async function DoctorQueuePage() {
       patient: {
         select: {
           id: true,
+          dateOfBirth: true,
+          gender: true,
           user: { select: { name: true } },
+        },
+      },
+      _count: {
+        select: {
+          prescriptions: true,
         },
       },
     },
