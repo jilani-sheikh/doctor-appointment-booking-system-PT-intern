@@ -87,6 +87,12 @@ export function Navbar({
                 Appointments
               </Link>
               <Link
+                href="/patient/medical-records"
+                className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+              >
+                Medical Records
+              </Link>
+              <Link
                 href="/patient/payments"
                 className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
               >
@@ -206,6 +212,12 @@ export function Navbar({
                         className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
                       >
                         Appointments
+                      </Link>
+                      <Link
+                        href="/patient/medical-records"
+                        className="text-base font-medium text-foreground/80 hover:text-primary py-2 px-1 rounded-md transition-colors"
+                      >
+                        Medical Records
                       </Link>
                       <Link
                         href="/patient/payments"

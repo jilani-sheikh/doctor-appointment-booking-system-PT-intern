@@ -87,6 +87,7 @@ enum NotificationType {
   WAVE_PUBLISHED
   QUEUE_DELAY
   QUEUE_CALLED
+  PRESCRIPTION_ISSUED
   GENERAL
 }
 
@@ -223,9 +224,17 @@ model Patient {
   whatsappOptInAt  DateTime? @map("whatsapp_opt_in_at")
   createdAt     DateTime  @default(now()) @map("created_at")
 
-  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  appointments    Appointment[]
-  waitlistEntries WaitlistEntry[]
+  user               User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointments       Appointment[]
+  waitlistEntries    WaitlistEntry[]
+  medicalProfile     PatientMedicalProfile?
+  allergies          PatientAllergy[]
+  conditions         PatientCondition[]
+  medications        PatientMedication[]
+  pastMedicalEntries PatientPastMedicalEntry[]
+  surgeries          PatientSurgery[]
+  familyHistories    PatientFamilyHistory[]
+  prescriptions      Prescription[]
 
   @@map("patients")
 }
@@ -253,6 +262,7 @@ model Doctor {
   timeOffs        DoctorTimeOff[]
   waves           Wave[]
   waitlistEntries WaitlistEntry[]
+  prescriptions   Prescription[]
 
   @@map("doctors")
 }
@@ -370,6 +380,7 @@ model Appointment {
   payments                    Payment[]
   refunds                     Refund[]
   notificationDeliveries      NotificationDelivery[]
+  prescriptions               Prescription[]
 
   @@unique([queueScopeKey, tokenNumber])
   @@index([patientId])
@@ -610,4 +621,196 @@ model AiChatMessage {
 
   @@index([sessionId, createdAt])
   @@map("ai_chat_messages")
+}
+
+enum AllergyCategory {
+  MEDICINE
+  FOOD
+  ENVIRONMENTAL
+  OTHER
+}
+
+enum AllergySeverity {
+  MILD
+  MODERATE
+  SEVERE
+}
+
+enum ConditionStatus {
+  ONGOING
+  RESOLVED
+}
+
+enum PastMedicalEntryType {
+  ILLNESS
+  DIAGNOSIS
+  PROCEDURE
+  HOSPITALIZATION
+}
+
+model PatientMedicalProfile {
+  id                       String   @id @default(cuid())
+  patientId                String   @unique @map("patient_id")
+  bloodGroup               String?  @map("blood_group")
+  lifestyleNotes           String?  @map("lifestyle_notes") @db.Text
+  otherMedicalNotes        String?  @map("other_medical_notes") @db.Text
+  emergencyContactName     String?  @map("emergency_contact_name")
+  emergencyContactPhone    String?  @map("emergency_contact_phone")
+  emergencyContactRelation String?  @map("emergency_contact_relation")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@map("patient_medical_profiles")
+}
+
+model PatientAllergy {
+  id        String          @id @default(cuid())
+  patientId String          @map("patient_id")
+  category  AllergyCategory
+  allergen  String
+  reaction  String?         @db.Text
+  severity  AllergySeverity @default(MODERATE)
+  notes     String?         @db.Text
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@map("patient_allergies")
+}
+
+model PatientCondition {
+  id            String          @id @default(cuid())
+  patientId     String          @map("patient_id")
+  name          String
+  diagnosedDate DateTime?       @map("diagnosed_date")
+  status        ConditionStatus @default(ONGOING)
+  notes         String?         @db.Text
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@map("patient_conditions")
+}
+
+model PatientMedication {
+  id           String    @id @default(cuid())
+  patientId    String    @map("patient_id")
+  medicineName String    @map("medicine_name")
+  dosage       String?
+  frequency    String?
+  startDate    DateTime? @map("start_date")
+  endDate      DateTime? @map("end_date")
+  prescribedBy String?   @map("prescribed_by")
+  notes        String?   @db.Text
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@map("patient_medications")
+}
+
+model PatientPastMedicalEntry {
+  id           String               @id @default(cuid())
+  patientId    String               @map("patient_id")
+  entryType    PastMedicalEntryType @map("entry_type")
+  title        String
+  dateOrYear   String?              @map("date_or_year")
+  recordedDate DateTime?            @map("recorded_date")
+  facility     String?
+  notes        String?              @db.Text
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@map("patient_past_medical_entries")
+}
+
+model PatientSurgery {
+  id               String    @id @default(cuid())
+  patientId        String    @map("patient_id")
+  procedureName    String    @map("procedure_name")
+  dateOrYear       String?   @map("date_or_year")
+  surgeryDate      DateTime? @map("surgery_date")
+  hospitalOrClinic String?   @map("hospital_or_clinic")
+  notes            String?   @db.Text
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@map("patient_surgeries")
+}
+
+model PatientFamilyHistory {
+  id           String   @id @default(cuid())
+  patientId    String   @map("patient_id")
+  condition    String
+  relationship String
+  notes        String?  @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@map("patient_family_histories")
+}
+
+model Prescription {
+  id                         String                 @id @default(cuid())
+  patientId                  String                 @map("patient_id")
+  doctorId                   String?                @map("doctor_id")
+  appointmentId              String?                @map("appointment_id")
+  idempotencyKey             String?                @unique @map("idempotency_key")
+  diagnosis                  String                 @db.Text
+  doctorNameSnapshot         String                 @map("doctor_name_snapshot")
+  doctorSpecializationSnapshot String?              @map("doctor_specialization_snapshot")
+  prescribedAt               DateTime               @default(now()) @map("prescribed_at")
+  generalInstructions        String?                @map("general_instructions") @db.Text
+  lifestyleAdvice            String?                @map("lifestyle_advice") @db.Text
+  followUpRecommendation     String?                @map("follow_up_recommendation") @db.Text
+  followUpDate               DateTime?              @map("follow_up_date")
+  notes                      String?                @db.Text
+  createdAt                  DateTime               @default(now()) @map("created_at")
+  updatedAt                  DateTime               @updatedAt @map("updated_at")
+
+  patient     Patient                @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor      Doctor?                @relation(fields: [doctorId], references: [id], onDelete: SetNull)
+  appointment Appointment?           @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  medicines   PrescriptionMedicine[]
+
+  @@index([patientId, prescribedAt])
+  @@index([doctorId, prescribedAt])
+  @@index([appointmentId])
+  @@map("prescriptions")
+}
+
+model PrescriptionMedicine {
+  id             String   @id @default(cuid())
+  prescriptionId String   @map("prescription_id")
+  sortOrder      Int      @default(0) @map("sort_order")
+  medicineName   String   @map("medicine_name")
+  dosage         String
+  route          String?
+  frequency      String
+  duration       String
+  quantity       String?
+  instructions   String?  @db.Text
+  notes          String?  @db.Text
+
+  prescription Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+
+  @@index([prescriptionId, sortOrder])
+  @@map("prescription_medicines")
 }

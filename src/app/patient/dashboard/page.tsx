@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { Calendar, User, Clock, ArrowRight, Activity, AlertCircle } from "lucide-react";
+import { Calendar, User, Clock, ArrowRight, Activity, AlertCircle, ClipboardList, Pill, AlertTriangle } from "lucide-react";
 import { formatDateIST, formatTimeIST, formatSlotRange, formatSlotDateTimeRangeIST, getTodayISTDateString, getISTDateString } from "@/lib/time";
 import {
   effectiveSlot,
@@ -16,7 +16,7 @@ import {
 import { discoverAlternativeAppointmentsForPatient } from "@/lib/actions/reschedule";
 import { DisruptedAlternativeSelector } from "@/components/patient/disrupted-alternative-selector";
 import { calculateSubSlotQueues, EMERGENCY_DISCLAIMER, type SubSlotQueueItem } from "@/lib/queue";
-import { buildSubSlotQueueScopeKey, formatSubSlotLabel } from "@/lib/queue-tokens";
+import { buildSubSlotQueueScopeKey, formatDoctorDisplayName, formatSubSlotLabel } from "@/lib/queue-tokens";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
 import { DeleteProfileDialog } from "@/components/auth/delete-profile-dialog";
 import { LiveQueueRefresh } from "@/components/patient/live-queue-refresh";
@@ -41,33 +41,60 @@ export default async function PatientDashboardPage() {
   const now = new Date();
   const todayISTStr = getTodayISTDateString();
 
-  // Query appointments for counts and active appointments
-  const allAppointments = await db.appointment.findMany({
-    where: {
-      patientId: patient.id,
-    },
-    include: {
-      wave: true,
-      availability: {
-        include: {
-          doctor: {
-            include: {
-              user: {
-                select: {
-                  name: true,
+  // Query appointments for counts and active appointments + lightweight medical summary
+  const [
+    allAppointments,
+    allergyCount,
+    severeAllergyCount,
+    ongoingConditionCount,
+    medicationCount,
+    recentPrescriptions,
+    totalPrescriptionCount,
+  ] = await Promise.all([
+    db.appointment.findMany({
+      where: {
+        patientId: patient.id,
+      },
+      include: {
+        wave: true,
+        availability: {
+          include: {
+            doctor: {
+              include: {
+                user: {
+                  select: {
+                    name: true,
+                  },
                 },
               },
             },
           },
         },
       },
-    },
-    orderBy: {
-      availability: {
-        startTime: "asc",
+      orderBy: {
+        availability: {
+          startTime: "asc",
+        },
       },
-    },
-  });
+    }),
+    db.patientAllergy.count({ where: { patientId: patient.id } }),
+    db.patientAllergy.count({ where: { patientId: patient.id, severity: "SEVERE" } }),
+    db.patientCondition.count({ where: { patientId: patient.id, status: "ONGOING" } }),
+    db.patientMedication.count({ where: { patientId: patient.id } }),
+    db.prescription.findMany({
+      where: { patientId: patient.id },
+      select: {
+        id: true,
+        diagnosis: true,
+        doctorNameSnapshot: true,
+        prescribedAt: true,
+        _count: { select: { medicines: true } },
+      },
+      orderBy: { prescribedAt: "desc" },
+      take: 3,
+    }),
+    db.prescription.count({ where: { patientId: patient.id } }),
+  ]);
 
   const upcomingAppts = allAppointments.filter((a) => {
     const isFutureOrToday =
@@ -193,7 +220,7 @@ export default async function PatientDashboardPage() {
             Manage your medical appointments, track live queue positions, and view your profile.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <Link
             href="/doctors"
             className={buttonVariants({ variant: "default", className: "shadow-sm flex items-center" })}
@@ -207,6 +234,13 @@ export default async function PatientDashboardPage() {
           >
             <Clock className="h-4 w-4 mr-2" />
             My Consultations
+          </Link>
+          <Link
+            href="/patient/medical-records"
+            className={buttonVariants({ variant: "outline", className: "flex items-center" })}
+          >
+            <ClipboardList className="h-4 w-4 mr-2" />
+            Medical Records
           </Link>
         </div>
       </div>
@@ -539,6 +573,98 @@ export default async function PatientDashboardPage() {
               Find a Doctor <ArrowRight className="h-3 w-3" />
             </Link>
           </div>
+        </Card>
+      </div>
+
+      {/* Medical Profile & Prescriptions Summary Card */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card className="shadow-sm border-border bg-card">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <ClipboardList className="h-4 w-4 text-primary" />
+                My Medical History
+              </CardTitle>
+              <Link
+                href="/patient/medical-records"
+                className="text-xs font-semibold text-primary hover:underline"
+              >
+                Manage Records &rarr;
+              </Link>
+            </div>
+            <CardDescription className="text-xs">
+              Allergies, ongoing conditions, current medications, and past history
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-lg border border-border/70 p-2.5">
+                <p className="text-lg font-bold text-foreground">{allergyCount}</p>
+                <p className="text-[11px] text-muted-foreground">Allergies</p>
+              </div>
+              <div className="rounded-lg border border-border/70 p-2.5">
+                <p className="text-lg font-bold text-foreground">{ongoingConditionCount}</p>
+                <p className="text-[11px] text-muted-foreground">Ongoing Conditions</p>
+              </div>
+              <div className="rounded-lg border border-border/70 p-2.5">
+                <p className="text-lg font-bold text-foreground">{medicationCount}</p>
+                <p className="text-[11px] text-muted-foreground">Medications</p>
+              </div>
+            </div>
+            {severeAllergyCount > 0 && (
+              <div className="rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-500/30 px-3 py-2 text-xs text-rose-800 dark:text-rose-200 flex items-center gap-2 font-medium">
+                <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+                {severeAllergyCount} severe allergy alert(s) active on your profile.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-sm border-border bg-card">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Pill className="h-4 w-4 text-emerald-600" />
+                Recent Prescriptions ({totalPrescriptionCount})
+              </CardTitle>
+              <Link
+                href="/patient/medical-records?tab=prescriptions"
+                className="text-xs font-semibold text-primary hover:underline"
+              >
+                View All &rarr;
+              </Link>
+            </div>
+            <CardDescription className="text-xs">
+              Latest prescriptions issued by your doctors in Medrella
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {recentPrescriptions.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-4 text-center border border-dashed rounded-lg">
+                No prescriptions issued yet.
+              </p>
+            ) : (
+              recentPrescriptions.map((rx) => (
+                <Link
+                  key={rx.id}
+                  href={`/patient/prescriptions/${rx.id}`}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-border/70 p-2.5 hover:border-primary/40 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-foreground truncate">
+                      {rx.diagnosis}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {formatDoctorDisplayName(rx.doctorNameSnapshot)} • {formatDateIST(rx.prescribedAt)} • {rx._count.medicines} medicine(s)
+                    </p>
+                  </div>
+                  <Badge variant="outline" className="text-[10px] shrink-0">
+                    Open Rx
+                  </Badge>
+                </Link>
+              ))
+            )}
+          </CardContent>
         </Card>
       </div>
     </div>
