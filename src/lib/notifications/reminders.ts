@@ -41,8 +41,12 @@ export async function syncAppointmentReminders(
     return { cancelled: res.count, skipped: 0, scheduled: 0 };
   }
 
-  // 2. CHECKED_IN: Patient has already arrived; skip any future reminders
-  if (status === AppointmentStatus.CHECKED_IN || status === AppointmentStatus.IN_CONSULTATION) {
+  // 2. CHECKED_IN / CALLED / IN_CONSULTATION: Patient has arrived or is in active care; skip future reminders
+  if (
+    status === AppointmentStatus.CHECKED_IN ||
+    status === AppointmentStatus.CALLED ||
+    status === AppointmentStatus.IN_CONSULTATION
+  ) {
     const res = await tx.notificationDelivery.updateMany({
       where: {
         appointmentId,

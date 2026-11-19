@@ -1,4 +1,5 @@
 import { AppointmentStatus } from "@/generated/prisma/enums";
+import { compareSubSlotTokenOrder } from "@/lib/queue-tokens";
 
 export const EMERGENCY_DISCLAIMER =
   "For medical emergencies, contact your hospital's emergency line. Do not use this app for emergencies.";
@@ -11,6 +12,10 @@ export interface QueueAppointmentItem {
   actualStartAt?: Date | null;
   actualEndAt?: Date | null;
   checkedInAt?: Date | null;
+  calledAt?: Date | null;
+  tokenNumber?: number | null;
+  createdAt?: Date | null;
+  queueScopeKey?: string | null;
 }
 
 export interface EstimatedQueueItem {
@@ -22,16 +27,17 @@ export interface EstimatedQueueItem {
   expectedEnd: Date;
   delayMinutes: number; // raw delay in minutes
   roundedDelayMinutes: number; // approximate rounded to nearest 5 min
-  queuePosition: number; // 1-based index in remaining queue
-  isCurrent: boolean; // currently IN_CONSULTATION
+  queuePosition: number; // 1-based index in remaining sub-slot queue
+  isCurrent: boolean; // currently CALLED or IN_CONSULTATION
 }
 
 export interface QueueSummary {
   waiting: number; // CHECKED_IN
-  inProgress: number; // IN_CONSULTATION
-  completed: number; // COMPLETED today
-  remaining: number; // CONFIRMED + CHECKED_IN + IN_CONSULTATION
-  runningBehindMinutes: number; // delay of the doctor today (rounded to 5 min)
+  called: number; // CALLED
+  inProgress: number; // CALLED + IN_CONSULTATION
+  completed: number; // COMPLETED
+  remaining: number; // CONFIRMED + CHECKED_IN + CALLED + IN_CONSULTATION (+ PENDING)
+  runningBehindMinutes: number; // delay (rounded to 5 min)
 }
 
 /**
@@ -63,7 +69,10 @@ export function calculateQueueEstimates(
 ): Map<string, EstimatedQueueItem> {
   const estimates = new Map<string, EstimatedQueueItem>();
 
-  // Filter out terminal statuses and sort strictly by scheduledStart
+  // Filter out terminal statuses and sort strictly by scheduledStart, breaking same-slot ties cleanly
+  const isCurrentActive = (status: AppointmentStatus) =>
+    status === AppointmentStatus.IN_CONSULTATION || status === AppointmentStatus.CALLED;
+
   const activeAppointments = appointments
     .filter(
       (a) =>
@@ -71,7 +80,16 @@ export function calculateQueueEstimates(
         a.status !== AppointmentStatus.NO_SHOW &&
         a.status !== AppointmentStatus.COMPLETED
     )
-    .sort((a, b) => a.scheduledStart.getTime() - b.scheduledStart.getTime());
+    .sort((a, b) => {
+      const startDiff = a.scheduledStart.getTime() - b.scheduledStart.getTime();
+      if (startDiff !== 0) return startDiff;
+
+      const aCurrent = isCurrentActive(a.status);
+      const bCurrent = isCurrentActive(b.status);
+      if (aCurrent !== bCurrent) return aCurrent ? -1 : 1;
+
+      return compareSubSlotTokenOrder(a, b);
+    });
 
   if (activeAppointments.length === 0) {
     return estimates;
@@ -83,8 +101,11 @@ export function calculateQueueEstimates(
   for (const appt of activeAppointments) {
     const slotDurationMs = appt.scheduledEnd.getTime() - appt.scheduledStart.getTime();
 
-    if (appt.status === AppointmentStatus.IN_CONSULTATION) {
-      const actualStart = appt.actualStartAt ?? appt.scheduledStart;
+    if (
+      appt.status === AppointmentStatus.IN_CONSULTATION ||
+      appt.status === AppointmentStatus.CALLED
+    ) {
+      const actualStart = appt.actualStartAt ?? appt.calledAt ?? appt.scheduledStart;
       const expectedEndMs = Math.max(now.getTime(), actualStart.getTime() + slotDurationMs);
       const expectedEnd = new Date(expectedEndMs);
 
@@ -152,6 +173,7 @@ export function calculateQueueSummary(
   estimates: Map<string, EstimatedQueueItem>
 ): QueueSummary {
   let waiting = 0;
+  let called = 0;
   let inProgress = 0;
   let completed = 0;
   let remaining = 0;
@@ -160,6 +182,10 @@ export function calculateQueueSummary(
   for (const appt of appointments) {
     if (appt.status === AppointmentStatus.CHECKED_IN) {
       waiting++;
+      remaining++;
+    } else if (appt.status === AppointmentStatus.CALLED) {
+      called++;
+      inProgress++;
       remaining++;
     } else if (appt.status === AppointmentStatus.IN_CONSULTATION) {
       inProgress++;
@@ -178,9 +204,58 @@ export function calculateQueueSummary(
 
   return {
     waiting,
+    called,
     inProgress,
     completed,
     remaining,
     runningBehindMinutes: roundToNearest5Minutes(maxDelay),
+  };
+}
+
+export interface SubSlotQueueItem extends QueueAppointmentItem {
+  queueScopeKey: string;
+}
+
+export interface SubSlotQueuesResult {
+  estimates: Map<string, EstimatedQueueItem>;
+  subSlotSummaries: Map<string, QueueSummary>;
+  groupedItems: Map<string, SubSlotQueueItem[]>;
+}
+
+/**
+ * Computes queue estimates and summary metrics STRICTLY per sub-slot queue (`queueScopeKey`),
+ * ensuring appointments across different doctors, dates, Wave sub-slots, or Stream windows
+ * never share queue positions or wait-time propagation.
+ */
+export function calculateSubSlotQueues<T extends SubSlotQueueItem>(
+  appointments: readonly T[],
+  now: Date = new Date()
+): SubSlotQueuesResult {
+  const groupedItems = new Map<string, T[]>();
+
+  for (const appt of appointments) {
+    const existing = groupedItems.get(appt.queueScopeKey);
+    if (existing) {
+      existing.push(appt);
+    } else {
+      groupedItems.set(appt.queueScopeKey, [appt]);
+    }
+  }
+
+  const estimates = new Map<string, EstimatedQueueItem>();
+  const subSlotSummaries = new Map<string, QueueSummary>();
+
+  for (const [scopeKey, group] of groupedItems.entries()) {
+    const scopeEstimates = calculateQueueEstimates(group, now);
+    for (const [apptId, estimate] of scopeEstimates.entries()) {
+      estimates.set(apptId, estimate);
+    }
+    subSlotSummaries.set(scopeKey, calculateQueueSummary(group, scopeEstimates));
+  }
+
+  return {
+    estimates,
+    subSlotSummaries,
+    groupedItems,
   };
 }

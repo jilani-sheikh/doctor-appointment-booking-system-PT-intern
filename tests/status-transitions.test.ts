@@ -4,6 +4,7 @@ import { AppointmentStatus, Role } from "../src/generated/prisma/client";
 import {
   isValidTransition,
   canPatientCheckIn,
+  canStaffCheckIn,
   canDoctorNoShow,
   canPatientCancel,
   canPatientReschedule,
@@ -39,21 +40,43 @@ test("isValidTransition: validates role and status transitions correctly", () =>
   // PENDING -> IN_CONSULTATION (illegal: must be CONFIRMED and CHECKED_IN first)
   assert.equal(isValidTransition(AppointmentStatus.PENDING, AppointmentStatus.IN_CONSULTATION, Role.DOCTOR), false);
 
-  // CONFIRMED -> CHECKED_IN
+  // CONFIRMED -> CHECKED_IN (Patient self check-in & Receptionist desk check-in only; Doctor & Admin cannot check patients in)
   assert.equal(isValidTransition(AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, Role.PATIENT), true);
-  assert.equal(isValidTransition(AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, Role.DOCTOR), true);
+  assert.equal(isValidTransition(AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, Role.DOCTOR), false);
+  assert.equal(isValidTransition(AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, Role.ADMIN), false);
+  assert.equal(isValidTransition(AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, Role.RECEPTIONIST), true);
 
-  // CONFIRMED -> NO_SHOW (Doctor/Admin only)
-  assert.equal(isValidTransition(AppointmentStatus.CONFIRMED, AppointmentStatus.NO_SHOW, Role.DOCTOR), true);
+  // RECEPTIONIST queue execution & RBAC boundary: Check In, Call Next Patient, Start Consultation, Completed, Not Arrived — cannot cancel or reorder stream
+  assert.equal(isValidTransition(AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, Role.RECEPTIONIST), false);
+  assert.equal(isValidTransition(AppointmentStatus.PENDING, AppointmentStatus.CANCELLED, Role.RECEPTIONIST), false);
+  assert.equal(isValidTransition(AppointmentStatus.CONFIRMED, AppointmentStatus.CANCELLED, Role.RECEPTIONIST), false);
+  assert.equal(isValidTransition(AppointmentStatus.CONFIRMED, AppointmentStatus.NO_SHOW, Role.RECEPTIONIST), true);
+  assert.equal(isValidTransition(AppointmentStatus.CHECKED_IN, AppointmentStatus.CALLED, Role.RECEPTIONIST), true);
+  assert.equal(isValidTransition(AppointmentStatus.CHECKED_IN, AppointmentStatus.CANCELLED, Role.RECEPTIONIST), false);
+  assert.equal(isValidTransition(AppointmentStatus.CHECKED_IN, AppointmentStatus.NO_SHOW, Role.RECEPTIONIST), true);
+  assert.equal(isValidTransition(AppointmentStatus.CHECKED_IN, AppointmentStatus.COMPLETED, Role.RECEPTIONIST), false);
+  assert.equal(isValidTransition(AppointmentStatus.CALLED, AppointmentStatus.IN_CONSULTATION, Role.RECEPTIONIST), true);
+  assert.equal(isValidTransition(AppointmentStatus.CALLED, AppointmentStatus.COMPLETED, Role.RECEPTIONIST), false);
+  assert.equal(isValidTransition(AppointmentStatus.CALLED, AppointmentStatus.NO_SHOW, Role.RECEPTIONIST), true);
+  assert.equal(isValidTransition(AppointmentStatus.IN_CONSULTATION, AppointmentStatus.COMPLETED, Role.RECEPTIONIST), true);
+
+  // CONFIRMED -> NO_SHOW (Receptionist only; Doctor & Admin cannot mark no-show)
+  assert.equal(isValidTransition(AppointmentStatus.CONFIRMED, AppointmentStatus.NO_SHOW, Role.DOCTOR), false);
+  assert.equal(isValidTransition(AppointmentStatus.CONFIRMED, AppointmentStatus.NO_SHOW, Role.ADMIN), false);
   assert.equal(isValidTransition(AppointmentStatus.CONFIRMED, AppointmentStatus.NO_SHOW, Role.PATIENT), false);
 
-  // CHECKED_IN -> IN_CONSULTATION (Doctor only)
-  assert.equal(isValidTransition(AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_CONSULTATION, Role.DOCTOR), true);
-  assert.equal(isValidTransition(AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_CONSULTATION, Role.PATIENT), false);
-  assert.equal(isValidTransition(AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_CONSULTATION, Role.ADMIN), false);
+  // CHECKED_IN -> CALLED (Receptionist only via Call Next Patient; Doctor queue is strictly read-only)
+  assert.equal(isValidTransition(AppointmentStatus.CHECKED_IN, AppointmentStatus.CALLED, Role.DOCTOR), false);
+  assert.equal(isValidTransition(AppointmentStatus.CHECKED_IN, AppointmentStatus.CALLED, Role.PATIENT), false);
+  assert.equal(isValidTransition(AppointmentStatus.CHECKED_IN, AppointmentStatus.CALLED, Role.ADMIN), false);
+  assert.equal(isValidTransition(AppointmentStatus.CHECKED_IN, AppointmentStatus.CALLED, Role.RECEPTIONIST), true);
 
-  // IN_CONSULTATION -> COMPLETED (Doctor only)
-  assert.equal(isValidTransition(AppointmentStatus.IN_CONSULTATION, AppointmentStatus.COMPLETED, Role.DOCTOR), true);
+  // CALLED -> IN_CONSULTATION -> COMPLETED (Receptionist only; Doctor & Admin cannot start or complete consultations)
+  assert.equal(isValidTransition(AppointmentStatus.CALLED, AppointmentStatus.IN_CONSULTATION, Role.DOCTOR), false);
+  assert.equal(isValidTransition(AppointmentStatus.CALLED, AppointmentStatus.IN_CONSULTATION, Role.PATIENT), false);
+  assert.equal(isValidTransition(AppointmentStatus.CALLED, AppointmentStatus.IN_CONSULTATION, Role.ADMIN), false);
+  assert.equal(isValidTransition(AppointmentStatus.CALLED, AppointmentStatus.COMPLETED, Role.DOCTOR), false);
+  assert.equal(isValidTransition(AppointmentStatus.IN_CONSULTATION, AppointmentStatus.COMPLETED, Role.DOCTOR), false);
   assert.equal(isValidTransition(AppointmentStatus.IN_CONSULTATION, AppointmentStatus.COMPLETED, Role.ADMIN), false);
   assert.equal(isValidTransition(AppointmentStatus.IN_CONSULTATION, AppointmentStatus.COMPLETED, Role.PATIENT), false);
 
@@ -190,4 +213,31 @@ test("canPatientReschedule enforces max 2 reschedules and 2h cutoff", () => {
     ).allowed,
     true
   );
+});
+
+test("canStaffCheckIn authorizes Receptionist strictly on CONFIRMED status (not Doctor/Patient/Admin)", () => {
+  assert.equal(canStaffCheckIn({ status: AppointmentStatus.CONFIRMED }, Role.RECEPTIONIST).allowed, true);
+  assert.equal(canStaffCheckIn({ status: AppointmentStatus.CONFIRMED }, Role.DOCTOR).allowed, false);
+  assert.equal(canStaffCheckIn({ status: AppointmentStatus.CONFIRMED }, Role.ADMIN).allowed, false);
+  assert.equal(canStaffCheckIn({ status: AppointmentStatus.CONFIRMED }, Role.PATIENT).allowed, false);
+
+  const alreadyChecked = canStaffCheckIn({ status: AppointmentStatus.CHECKED_IN }, Role.RECEPTIONIST);
+  assert.equal(alreadyChecked.allowed, false);
+  assert.equal(alreadyChecked.alreadyCheckedIn, true);
+
+  const alreadyCalled = canStaffCheckIn({ status: AppointmentStatus.CALLED }, Role.RECEPTIONIST);
+  assert.equal(alreadyCalled.allowed, false);
+  assert.equal(alreadyCalled.alreadyCheckedIn, true);
+
+  for (const blockedStatus of [
+    AppointmentStatus.CANCELLED,
+    AppointmentStatus.COMPLETED,
+    AppointmentStatus.NO_SHOW,
+    AppointmentStatus.PENDING,
+    AppointmentStatus.PENDING_PAYMENT,
+  ]) {
+    const res = canStaffCheckIn({ status: blockedStatus }, Role.RECEPTIONIST);
+    assert.equal(res.allowed, false);
+    assert.equal(res.alreadyCheckedIn, false);
+  }
 });
