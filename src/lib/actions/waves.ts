@@ -162,6 +162,7 @@ export async function generateDoctorWavesAction(
               in: [
                 AppointmentStatus.CONFIRMED,
                 AppointmentStatus.CHECKED_IN,
+                AppointmentStatus.CALLED,
                 AppointmentStatus.IN_CONSULTATION,
                 AppointmentStatus.COMPLETED,
               ],
@@ -301,6 +302,7 @@ export async function generateDoctorWavesAction(
 
     revalidatePath("/doctor/arrival-windows");
     revalidatePath("/doctor/queue");
+    revalidatePath("/receptionist");
     revalidatePath("/patient/appointments");
 
     const publishMsg = result.isPublished ? " (Published to patients)" : " (Draft)";
@@ -465,6 +467,7 @@ export async function publishDoctorWaveAction(input: PublishDoctorWaveInput) {
     revalidatePath("/doctor/arrival-windows");
     revalidatePath(`/doctor/arrival-windows/${wave.id}`);
     revalidatePath("/doctor/queue");
+    revalidatePath("/receptionist");
     revalidatePath("/patient/appointments");
 
     return { success: true, message: "Wave successfully published to patients." };
@@ -575,6 +578,7 @@ export async function reassignDoctorWaveAppointmentAction(input: ReassignDoctorW
     revalidatePath("/doctor/arrival-windows");
     revalidatePath(`/doctor/arrival-windows/${targetWaveId}`);
     revalidatePath("/doctor/queue");
+    revalidatePath("/receptionist");
     revalidatePath("/patient/appointments");
 
     return { success: true, message: "Appointment successfully assigned to wave." };

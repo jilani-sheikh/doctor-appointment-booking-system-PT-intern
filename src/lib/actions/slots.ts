@@ -502,6 +502,7 @@ export async function previewScheduleAction(input: ScheduleInput) {
 const OVERRIDE_ACTIVE_STATUSES = [
     AppointmentStatus.CONFIRMED,
     AppointmentStatus.CHECKED_IN,
+    AppointmentStatus.CALLED,
     AppointmentStatus.PENDING_PAYMENT,
     AppointmentStatus.IN_CONSULTATION,
   ];
@@ -510,6 +511,7 @@ const OVERRIDE_ACTIVE_STATUSES = [
     AppointmentStatus.PENDING,
     AppointmentStatus.CONFIRMED,
     AppointmentStatus.CHECKED_IN,
+    AppointmentStatus.CALLED,
     AppointmentStatus.IN_CONSULTATION,
     AppointmentStatus.PENDING_PAYMENT,
   ];

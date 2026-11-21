@@ -9,7 +9,8 @@ import {
   isEligibleForDisruptedDashboardAlternatives,
 } from "@/lib/scheduling";
 import { discoverAlternativeAppointmentsForPatient } from "@/lib/actions/reschedule";
-import { calculateQueueEstimates, type QueueAppointmentItem } from "@/lib/queue";
+import { calculateSubSlotQueues, type SubSlotQueueItem } from "@/lib/queue";
+import { buildSubSlotQueueScopeKey } from "@/lib/queue-tokens";
 import { AppointmentsView } from "./appointments-view";
 import { toPatientAppointmentDto, type SerializedPatientAppointment } from "@/lib/serializers";
 import { Calendar, Plus } from "lucide-react";
@@ -67,40 +68,70 @@ export default async function PatientAppointmentsPage() {
     },
   });
 
-  // Calculate doctor queue estimates for any appointment scheduled for today
-  const doctorIdsToday = new Set<string>();
+  // Calculate strictly sub-slot scoped queue estimates for today's consultations (excluding PENDING_PAYMENT holds and exposing zero other patients' PII)
+  const todayAvailabilityIds = new Set<string>();
   for (const a of rawAppointments) {
-    if (getISTDateString(effectiveSlot(a).start) === todayISTStr) {
-      doctorIdsToday.add(a.availability.doctorId);
+    if (
+      a.status !== AppointmentStatus.PENDING_PAYMENT &&
+      getISTDateString(effectiveSlot(a).start) === todayISTStr
+    ) {
+      todayAvailabilityIds.add(a.availabilityId);
     }
   }
 
-  // Pre-fetch today's queue for each relevant doctor
-  const doctorEstimatesMap = new Map<string, ReturnType<typeof calculateQueueEstimates>>();
-  for (const docId of doctorIdsToday) {
-    const docAppts = await db.appointment.findMany({
+  let todaySubSlotEstimates = new Map<string, ReturnType<typeof calculateSubSlotQueues>["estimates"] extends Map<string, infer V> ? V : never>();
+  if (todayAvailabilityIds.size > 0) {
+    const siblingAppts = await db.appointment.findMany({
       where: {
-        availability: { doctorId: docId },
+        availabilityId: { in: Array.from(todayAvailabilityIds) },
+        status: { not: AppointmentStatus.PENDING_PAYMENT },
       },
-      include: { availability: true },
-      orderBy: { availability: { startTime: "asc" } },
+      select: {
+        id: true,
+        availabilityId: true,
+        queueScopeKey: true,
+        tokenNumber: true,
+        status: true,
+        slotStart: true,
+        slotEnd: true,
+        actualStartAt: true,
+        actualEndAt: true,
+        checkedInAt: true,
+        calledAt: true,
+        createdAt: true,
+        availability: {
+          select: {
+            doctorId: true,
+            startTime: true,
+            endTime: true,
+          },
+        },
+      },
     });
 
-    const todayDocAppts = docAppts.filter(
-      (a) => getISTDateString(effectiveSlot(a).start) === todayISTStr
-    );
+    const queueItems: SubSlotQueueItem[] = siblingAppts
+      .filter((a) => getISTDateString(effectiveSlot(a).start) === todayISTStr)
+      .map((a) => ({
+        id: a.id,
+        status: a.status,
+        scheduledStart: effectiveSlot(a).start,
+        scheduledEnd: effectiveSlot(a).end,
+        actualStartAt: a.actualStartAt,
+        actualEndAt: a.actualEndAt,
+        checkedInAt: a.checkedInAt,
+        calledAt: a.calledAt,
+        tokenNumber: a.tokenNumber,
+        createdAt: a.createdAt,
+        queueScopeKey:
+          a.queueScopeKey ??
+          buildSubSlotQueueScopeKey({
+            doctorId: a.availability.doctorId,
+            startTime: a.availability.startTime,
+            availabilityId: a.availabilityId,
+          }),
+      }));
 
-    const queueItems: QueueAppointmentItem[] = todayDocAppts.map((a) => ({
-      id: a.id,
-      status: a.status,
-      scheduledStart: effectiveSlot(a).start,
-      scheduledEnd: effectiveSlot(a).end,
-      actualStartAt: a.actualStartAt,
-      actualEndAt: a.actualEndAt,
-      checkedInAt: a.checkedInAt,
-    }));
-
-    doctorEstimatesMap.set(docId, calculateQueueEstimates(queueItems, now));
+    todaySubSlotEstimates = calculateSubSlotQueues(queueItems, now).estimates;
   }
 
   const upcoming: SerializedPatientAppointment[] = [];
@@ -115,15 +146,10 @@ export default async function PatientAppointmentsPage() {
       appt.status === AppointmentStatus.PENDING_PAYMENT ||
       appt.status === AppointmentStatus.CONFIRMED ||
       appt.status === AppointmentStatus.CHECKED_IN ||
+      appt.status === AppointmentStatus.CALLED ||
       appt.status === AppointmentStatus.IN_CONSULTATION;
 
-    let estimate = null;
-    if (isToday) {
-      const docEstimates = doctorEstimatesMap.get(appt.availability.doctorId);
-      if (docEstimates) {
-        estimate = docEstimates.get(appt.id) ?? null;
-      }
-    }
+    const estimate = isToday ? todaySubSlotEstimates.get(appt.id) ?? null : null;
 
     let suggestedAlternatives = null;
     if (

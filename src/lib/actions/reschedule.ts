@@ -33,12 +33,14 @@ import {
   selectThreeLevelAlternatives,
   type ThreeLevelAlternativeSuggestions,
 } from "@/lib/scheduling";
+import { allocateSubSlotToken } from "@/lib/queue-tokens";
 
 const ACTIVE_CONFLICT_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.PENDING,
   AppointmentStatus.PENDING_PAYMENT,
   AppointmentStatus.CONFIRMED,
   AppointmentStatus.CHECKED_IN,
+  AppointmentStatus.CALLED,
   AppointmentStatus.IN_CONSULTATION,
 ];
 
@@ -607,7 +609,11 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
           throw new Error("SLOT_UNAVAILABLE");
         }
 
-        // 3. Conditionally update existing appointment (guards against duplicate submissions)
+        // 3. Allocate a new persisted sequential token strictly inside the target sub-slot queue
+        //    (old slot's tokenCounter is never decremented, so prior tokens remain retired).
+        const { tokenNumber, queueScopeKey } = await allocateSubSlotToken(tx, newAvailabilityId);
+
+        // 4. Conditionally update existing appointment (guards against duplicate submissions)
         const updatedAppt = await tx.appointment.updateMany({
           where: {
             id: appointmentId,
@@ -620,6 +626,8 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
             rescheduledFromAvailabilityId: oldAvailabilityId,
             rescheduleCount: { increment: 1 },
             status: AppointmentStatus.CONFIRMED,
+            tokenNumber,
+            queueScopeKey,
             waveId: null,
             slotStart: null,
             slotEnd: null,
@@ -709,6 +717,7 @@ export async function patientRescheduleAppointmentAction(input: RescheduleAppoin
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/dashboard");
     revalidatePath("/doctor/queue");
+    revalidatePath("/receptionist");
     revalidatePath("/doctor/slots");
     revalidatePath("/doctor/arrival-windows");
     revalidatePath(`/doctors/${originalDoctorId}`);
@@ -778,8 +787,22 @@ export async function doctorRescheduleAppointmentAction(input: RescheduleAppoint
     return { success: false, error: "Appointment not found or unauthorized." };
   }
 
+  if (
+    appointment.status !== AppointmentStatus.PENDING &&
+    appointment.status !== AppointmentStatus.CONFIRMED
+  ) {
+    return {
+      success: false,
+      error: `Appointments in ${appointment.status.toLowerCase()} status cannot be rescheduled.`,
+    };
+  }
+
   const oldAvailabilityId = appointment.availabilityId;
   const oldAppointmentSlot = effectiveSlot(appointment);
+
+  if (newAvailabilityId === oldAvailabilityId) {
+    return { success: false, error: "Please select a different consultation slot." };
+  }
 
   // New slot check
   const newSlot = await db.availability.findUnique({
@@ -842,12 +865,20 @@ export async function doctorRescheduleAppointmentAction(input: RescheduleAppoint
           throw new Error("SLOT_UNAVAILABLE");
         }
 
-        await tx.appointment.update({
-          where: { id: appointmentId },
+        const { tokenNumber, queueScopeKey } = await allocateSubSlotToken(tx, newAvailabilityId);
+
+        const updatedAppt = await tx.appointment.updateMany({
+          where: {
+            id: appointmentId,
+            availabilityId: oldAvailabilityId,
+            status: { in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED] },
+          },
           data: {
             availabilityId: newAvailabilityId,
             rescheduledFromAvailabilityId: oldAvailabilityId,
             rescheduleCount: { increment: 1 },
+            tokenNumber,
+            queueScopeKey,
             waveId: null,
             slotStart: null,
             slotEnd: null,
@@ -857,6 +888,10 @@ export async function doctorRescheduleAppointmentAction(input: RescheduleAppoint
             status: AppointmentStatus.CONFIRMED, // Confirmed by doctor
           },
         });
+
+        if (updatedAppt.count !== 1) {
+          throw new Error("APPOINTMENT_CONFLICT");
+        }
 
         const oldRelease = await releaseSlot(tx, oldAvailabilityId);
 
@@ -908,6 +943,7 @@ export async function doctorRescheduleAppointmentAction(input: RescheduleAppoint
     revalidatePath(`/book/reschedule/${appointmentId}`);
     revalidatePath("/doctor/appointments");
     revalidatePath("/doctor/queue");
+    revalidatePath("/receptionist");
     revalidatePath("/doctor/slots");
     revalidatePath("/patient/appointments");
     revalidatePath(`/doctors/${doctor.id}`);

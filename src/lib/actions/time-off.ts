@@ -168,7 +168,7 @@ export async function deleteDoctorTimeOffAction(input: DeleteDoctorTimeOffInput)
         status: SlotStatus.BLOCKED,
         appointments: {
           none: {
-            status: { in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_CONSULTATION] },
+            status: { in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.CALLED, AppointmentStatus.IN_CONSULTATION] },
           },
         },
       },

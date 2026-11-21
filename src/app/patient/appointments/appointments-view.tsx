@@ -58,13 +58,13 @@ export function AppointmentsView({
   const [cancelModalAppt, setCancelModalAppt] = useState<SerializedPatientAppointment | null>(null);
   const [cancelModalTime, setCancelModalTime] = useState<number>(0);
 
-  // Auto-refresh every 30 seconds while tab is active and visible
+  // Auto-refresh every 15 seconds while tab is active and visible
   useEffect(() => {
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") {
         router.refresh();
       }
-    }, 30000);
+    }, 15000);
 
     return () => clearInterval(interval);
   }, [router]);
@@ -144,6 +144,8 @@ export function AppointmentsView({
         return <Badge variant="success" className="text-[10px] uppercase font-semibold">Confirmed</Badge>;
       case "CHECKED_IN":
         return <Badge variant="warning" className="text-[10px] uppercase bg-amber-600 text-white font-semibold">Checked In / Waiting</Badge>;
+      case "CALLED":
+        return <Badge variant="default" className="text-[10px] uppercase bg-indigo-600 text-white animate-pulse font-semibold">Called — Please Proceed</Badge>;
       case "IN_CONSULTATION":
         return <Badge variant="default" className="text-[10px] uppercase bg-blue-600 animate-pulse font-semibold">In Consultation</Badge>;
       case "COMPLETED":
@@ -298,14 +300,35 @@ export function AppointmentsView({
                       <span className={`inline-flex items-center text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full border ${streamConfig.badgeClassName}`}>
                         {streamConfig.label}
                       </span>
+                      {typeof appt.tokenNumber === "number" && (
+                        <Badge className="bg-primary/15 text-primary border-primary/30 text-[11px] font-bold">
+                          Token #{appt.tokenNumber}
+                        </Badge>
+                      )}
                       {getStatusBadge(appt.status)}
                     </div>
 
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                    {appt.status === "CALLED" && (
+                      <div className="rounded-md bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-300 dark:border-indigo-700 p-2.5 text-xs text-indigo-950 dark:text-indigo-100 font-medium flex items-center gap-2">
+                        <Activity className="h-4 w-4 text-indigo-600 shrink-0 animate-pulse" />
+                        <span>
+                          <strong>You have been called</strong>
+                          {typeof appt.tokenNumber === "number" ? ` (Token #${appt.tokenNumber})` : ""}. Please proceed to Dr. {appt.doctor.name}&apos;s consultation room.
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
                       <span className="flex items-center gap-1 font-medium text-foreground">
                         <Clock className="h-3.5 w-3.5 text-primary" />
                         {formatSlotDateTimeRangeIST(startDate, endDate)}
                       </span>
+                      {appt.subSlotLabel && (
+                        <>
+                          <span>•</span>
+                          <span className="font-medium text-primary/90">{appt.subSlotLabel}</span>
+                        </>
+                      )}
                       <span>•</span>
                       <span>Fee: ₹{appt.doctor.consultationFee.toLocaleString("en-IN")}</span>
                     </div>
@@ -319,13 +342,34 @@ export function AppointmentsView({
                       </div>
                     )}
 
-                    {/* Live Queue Estimate details */}
-                    {appt.queuePosition !== null && appt.queuePosition !== undefined && (
+                    {/* Live Queue Estimate details (strictly scoped to this sub-slot) */}
+                    {(appt.queuePosition !== null && appt.queuePosition !== undefined) && (
                       <div className="flex items-center gap-3 text-xs bg-muted/40 p-2.5 rounded-md border border-border/50 flex-wrap">
                         <span className="flex items-center gap-1 font-semibold text-foreground">
                           <Activity className="h-3.5 w-3.5 text-blue-600" />
-                          Queue Position: #{appt.queuePosition}
+                          {typeof appt.tokenNumber === "number" && (
+                            <span className="mr-1 text-primary">Token #{appt.tokenNumber} •</span>
+                          )}
+                          {appt.status === "CALLED"
+                            ? "Status: Currently Called"
+                            : `Queue Position: #${appt.queuePosition}`}
                         </span>
+                        {appt.checkedInAt && (
+                          <>
+                            <span>•</span>
+                            <span className="text-emerald-700 dark:text-emerald-400 font-medium">
+                              Checked in at {formatTimeIST(appt.checkedInAt)}
+                            </span>
+                          </>
+                        )}
+                        {appt.calledAt && (
+                          <>
+                            <span>•</span>
+                            <span className="text-indigo-700 dark:text-indigo-300 font-medium">
+                              Called at {formatTimeIST(appt.calledAt)}
+                            </span>
+                          </>
+                        )}
                         {appt.estimatedStart && (
                           <>
                             <span>•</span>

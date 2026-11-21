@@ -63,7 +63,14 @@ export async function deleteAccountAction(input: {
     const active = await db.appointment.count({
       where: {
         patientId: user.patient.id,
-        status: { in: [AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_CONSULTATION] },
+        status: {
+          in: [
+            AppointmentStatus.CONFIRMED,
+            AppointmentStatus.CHECKED_IN,
+            AppointmentStatus.CALLED,
+            AppointmentStatus.IN_CONSULTATION,
+          ],
+        },
         availability: { endTime: { gt: now } },
       },
     });
@@ -89,7 +96,7 @@ export async function deleteAccountAction(input: {
     const todayBlocker = await db.appointment.count({
       where: {
         availability: { doctorId: user.doctor.id, startTime: { gte: start, lt: nextDayStart } },
-        status: { in: [AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_CONSULTATION] },
+        status: { in: [AppointmentStatus.CHECKED_IN, AppointmentStatus.CALLED, AppointmentStatus.IN_CONSULTATION] },
       },
     });
     if (todayBlocker > 0) return friendlyBlocker("Finish today’s checked-in or in-consultation appointments before deleting your profile.");
