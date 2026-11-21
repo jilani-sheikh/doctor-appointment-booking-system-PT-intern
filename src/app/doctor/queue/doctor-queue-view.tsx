@@ -1,417 +1,499 @@
 "use client";
 
-import { useEffect, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { toast } from "sonner";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  User,
-  Clock,
-  Play,
-  CheckCircle2,
-  UserCheck,
-  UserX,
-  Ban,
-  Phone,
-  AlertCircle,
   Activity,
-  Waves,
+  BellRing,
+  CheckCircle2,
+  Clock,
+  Eye,
+  Hash,
+  RefreshCw,
+  User,
+  UserX,
+  Users,
+  AlertCircle,
 } from "lucide-react";
-import {
-  doctorMarkArrivedAction,
-  startConsultationAction,
-  endConsultationAction,
-  doctorNoShowAction,
-  setPriorityStreamAction,
-} from "@/lib/actions/queue";
-import { updateDoctorAppointmentStatusAction } from "@/lib/actions/doctor-appointments";
-import { formatTimeIST, formatSlotRange } from "@/lib/time";
-import { STREAM_CONFIGS } from "@/lib/streams";
-import { EMERGENCY_DISCLAIMER, type QueueSummary } from "@/lib/queue";
-import type { SerializedDoctorQueueItem } from "@/lib/serializers";
+import { formatSlotRange, formatTimeIST } from "@/lib/time";
+import { EMERGENCY_DISCLAIMER } from "@/lib/queue";
+import type { AppointmentStatus } from "@/generated/prisma/enums";
+import type {
+  DoctorLiveQueueData,
+  DoctorQueuePatientRow,
+} from "@/lib/doctor-queue";
 
 interface DoctorQueueViewProps {
-  queueItems: SerializedDoctorQueueItem[];
-  summary: QueueSummary;
+  data: DoctorLiveQueueData;
 }
 
-export function DoctorQueueView({ queueItems, summary }: DoctorQueueViewProps) {
+export function DoctorQueueView({ data }: DoctorQueueViewProps) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [selectedScopeKey, setSelectedScopeKey] = useState<string>(
+    data.defaultSelectedScopeKey ?? ""
+  );
 
-  // Auto-refresh queue every 30 seconds while tab is active and visible
+  // Live auto-refresh every 15 seconds while tab is active and visible
   useEffect(() => {
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") {
         router.refresh();
       }
-    }, 30000);
+    }, 15000);
 
     return () => clearInterval(interval);
   }, [router]);
 
-  const handleMarkArrived = (appointmentId: string) => {
-    startTransition(async () => {
-      const res = await doctorMarkArrivedAction(appointmentId);
-      if (res.success) {
-        toast.success(res.message);
-      } else {
-        toast.error(res.error);
-      }
-    });
-  };
+  const activeSubSlot =
+    data.subSlots.find((s) => s.queueScopeKey === selectedScopeKey) ??
+    data.subSlots.find((s) => s.queueScopeKey === data.defaultSelectedScopeKey) ??
+    data.subSlots[0] ??
+    null;
 
-  const handleStartConsultation = (appointmentId: string) => {
-    startTransition(async () => {
-      const res = await startConsultationAction(appointmentId);
-      if (res.success) {
-        toast.success(res.message);
-      } else {
-        toast.error(res.error);
-      }
-    });
-  };
-
-  const handleEndConsultation = (appointmentId: string) => {
-    startTransition(async () => {
-      const res = await endConsultationAction(appointmentId);
-      if (res.success) {
-        toast.success(res.message);
-      } else {
-        toast.error(res.error);
-      }
-    });
-  };
-
-  const handleNoShow = (appointmentId: string) => {
-    if (!confirm("Are you sure you want to mark this patient as No-Show?")) return;
-    startTransition(async () => {
-      const res = await doctorNoShowAction(appointmentId);
-      if (res.success) {
-        toast.success(res.message);
-      } else {
-        toast.error(res.error);
-      }
-    });
-  };
-
-  const handleCancel = (appointmentId: string) => {
-    if (!confirm("Are you sure you want to cancel this appointment and free the slot?")) return;
-    startTransition(async () => {
-      const res = await updateDoctorAppointmentStatusAction(appointmentId, "CANCELLED");
-      if (res.success) {
-        toast.success(res.message);
-      } else {
-        toast.error(res.error);
-      }
-    });
-  };
-
-  const handleSetPriority = (appointmentId: string) => {
-    startTransition(async () => {
-      const res = await setPriorityStreamAction(appointmentId);
-      if (res.success) {
-        toast.success(res.message);
-      } else {
-        toast.error(res.error);
-      }
-    });
-  };
-
-  const getStatusBadge = (status: string) => {
+  const renderStatusBadge = (status: AppointmentStatus, label: string) => {
     switch (status) {
-      case "CHECKED_IN":
-        return <Badge variant="warning" className="text-[10px] uppercase font-semibold">Arrived / Waiting</Badge>;
-      case "IN_CONSULTATION":
-        return <Badge variant="default" className="text-[10px] uppercase bg-blue-600 animate-pulse font-semibold">In Consultation</Badge>;
       case "CONFIRMED":
-        return <Badge variant="success" className="text-[10px] uppercase">Confirmed</Badge>;
-      case "PENDING":
-        return <Badge variant="outline" className="text-[10px] uppercase">Pending</Badge>;
+        return (
+          <Badge variant="outline" className="text-[10px] uppercase font-semibold border-amber-500/40 text-amber-700 dark:text-amber-300">
+            {label}
+          </Badge>
+        );
+      case "CHECKED_IN":
+        return (
+          <Badge className="bg-blue-600 text-white text-[10px] uppercase font-semibold">
+            {label}
+          </Badge>
+        );
+      case "CALLED":
+        return (
+          <Badge className="bg-indigo-600 text-white text-[10px] uppercase font-semibold animate-pulse">
+            {label}
+          </Badge>
+        );
+      case "IN_CONSULTATION":
+        return (
+          <Badge className="bg-emerald-600 text-white text-[10px] uppercase font-semibold animate-pulse">
+            {label}
+          </Badge>
+        );
+      case "COMPLETED":
+        return (
+          <Badge className="bg-emerald-700/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] uppercase font-semibold">
+            {label}
+          </Badge>
+        );
+      case "NO_SHOW":
+        return (
+          <Badge variant="destructive" className="bg-rose-700 text-[10px] uppercase font-semibold">
+            {label}
+          </Badge>
+        );
       default:
-        return <Badge variant="outline" className="text-[10px] uppercase">{status}</Badge>;
+        return (
+          <Badge variant="outline" className="text-[10px] uppercase">
+            {label}
+          </Badge>
+        );
     }
   };
 
-  const nextPatientToCall = queueItems.find((item) => item.status === "CHECKED_IN");
+  const renderPatientRow = (row: DoctorQueuePatientRow) => {
+    const start = new Date(row.scheduledStart);
+    const end = new Date(row.scheduledEnd);
+
+    return (
+      <div
+        key={row.id}
+        className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border transition-colors ${
+          row.isCurrent
+            ? "border-indigo-500/50 bg-indigo-50/40 dark:bg-indigo-950/20 shadow-xs"
+            : row.status === "CHECKED_IN"
+              ? "border-blue-500/30 bg-blue-50/20 dark:bg-blue-950/10"
+              : row.status === "COMPLETED" || row.status === "NO_SHOW"
+                ? "border-border/60 bg-muted/20 opacity-85"
+                : "border-border bg-card"
+        }`}
+      >
+        <div className="flex items-start sm:items-center gap-3.5">
+          <div
+            className={`flex h-11 min-w-11 px-2 items-center justify-center rounded-lg border font-bold text-sm shrink-0 ${
+              row.isCurrent
+                ? "bg-indigo-600 text-white border-indigo-600"
+                : "bg-primary/10 text-primary border-primary/20"
+            }`}
+          >
+            {row.tokenLabel}
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-sm text-foreground flex items-center gap-1.5">
+                <User className="h-3.5 w-3.5 text-muted-foreground" />
+                {row.patientName}
+              </span>
+              {renderStatusBadge(row.status, row.statusLabel)}
+              {row.queuePosition !== null && !row.isCurrent && (
+                <Badge variant="outline" className="text-[10px] font-medium">
+                  Queue #{row.queuePosition}
+                </Badge>
+              )}
+              <span className="text-[11px] text-muted-foreground">
+                • {row.subSlotLabel}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+              <span className="flex items-center gap-1 font-medium text-foreground">
+                <Clock className="h-3 w-3 text-primary" />
+                {formatSlotRange(start, end)}
+              </span>
+              {row.checkedInAt && (
+                <>
+                  <span>•</span>
+                  <span className="text-blue-700 dark:text-blue-300 font-medium">
+                    Checked In: {formatTimeIST(row.checkedInAt)}
+                  </span>
+                </>
+              )}
+              {row.calledAt && (
+                <>
+                  <span>•</span>
+                  <span className="text-indigo-700 dark:text-indigo-300 font-medium">
+                    Called: {formatTimeIST(row.calledAt)}
+                  </span>
+                </>
+              )}
+              {row.actualStartAt && (
+                <>
+                  <span>•</span>
+                  <span className="text-emerald-700 dark:text-emerald-300 font-medium">
+                    Started: {formatTimeIST(row.actualStartAt)}
+                  </span>
+                </>
+              )}
+              {row.completedAt && (
+                <>
+                  <span>•</span>
+                  <span className="text-emerald-700 dark:text-emerald-300 font-medium">
+                    Completed: {formatTimeIST(row.completedAt)}
+                  </span>
+                </>
+              )}
+              {row.noShowAt && (
+                <>
+                  <span>•</span>
+                  <span className="text-rose-700 dark:text-rose-300 font-medium">
+                    Marked Not Arrived: {formatTimeIST(row.noShowAt)}
+                  </span>
+                </>
+              )}
+              {row.expectedStart &&
+                row.status !== "COMPLETED" &&
+                row.status !== "NO_SHOW" && (
+                  <>
+                    <span>•</span>
+                    <span>
+                      Est. Consultation: <strong>{formatTimeIST(row.expectedStart)}</strong>
+                      {row.roundedDelayMinutes > 0 && (
+                        <span className="text-rose-600 font-semibold ml-1">
+                          (+{row.roundedDelayMinutes} min)
+                        </span>
+                      )}
+                    </span>
+                  </>
+                )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
-      {/* Summary Strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <Card className="bg-card border-border shadow-xs">
-          <CardContent className="p-4">
-            <span className="text-xs text-muted-foreground font-medium">Waiting Arrived</span>
-            <div className="text-2xl font-bold text-amber-600 mt-1">{summary.waiting}</div>
-          </CardContent>
-        </Card>
-        <Card className="bg-card border-border shadow-xs">
-          <CardContent className="p-4">
-            <span className="text-xs text-muted-foreground font-medium">In Consultation</span>
-            <div className="text-2xl font-bold text-blue-600 mt-1">{summary.inProgress}</div>
-          </CardContent>
-        </Card>
-        <Card className="bg-card border-border shadow-xs">
-          <CardContent className="p-4">
-            <span className="text-xs text-muted-foreground font-medium">Remaining Today</span>
-            <div className="text-2xl font-bold text-foreground mt-1">{summary.remaining}</div>
-          </CardContent>
-        </Card>
-        <Card className="bg-card border-border shadow-xs">
-          <CardContent className="p-4">
-            <span className="text-xs text-muted-foreground font-medium">Completed Today</span>
-            <div className="text-2xl font-bold text-emerald-600 mt-1">{summary.completed}</div>
-          </CardContent>
-        </Card>
-        <Card className="col-span-2 sm:col-span-1 bg-card border-border shadow-xs">
-          <CardContent className="p-4">
-            <span className="text-xs text-muted-foreground font-medium">Pace Delay</span>
-            <div className={`text-2xl font-bold mt-1 ${summary.runningBehindMinutes > 0 ? "text-rose-600" : "text-emerald-600"}`}>
-              {summary.runningBehindMinutes > 0 ? `+${summary.runningBehindMinutes} min` : "On Time"}
-            </div>
-          </CardContent>
-        </Card>
+      {/* Read-Only Monitoring Banner & Emergency Disclaimer */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-lg border border-blue-500/30 bg-blue-50/40 dark:bg-blue-950/20 px-4 py-2.5 text-xs text-blue-950 dark:text-blue-100">
+        <span className="flex items-center gap-2 font-medium">
+          <Eye className="h-4 w-4 text-blue-600 shrink-0" />
+          Read-only live queue monitor — all queue check-ins, calling, start/end consultation, and completion updates are controlled by the Reception Desk (auto-refreshes every 15s).
+        </span>
       </div>
 
-      {/* Emergency Notice */}
-      <div className="rounded-lg border border-border/80 bg-muted/40 p-3 text-xs text-muted-foreground flex items-center gap-2">
-        <AlertCircle className="h-4 w-4 text-primary shrink-0" />
+      <div className="rounded-lg border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/20 px-4 py-2.5 text-xs text-amber-900 dark:text-amber-200 flex items-center gap-2">
+        <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
         <span>{EMERGENCY_DISCLAIMER}</span>
       </div>
 
-      {/* Next Patient to Call Highlight Card */}
-      {nextPatientToCall && (
-        <Card className="border-2 border-blue-500/80 bg-gradient-to-r from-blue-50/50 via-indigo-50/20 to-transparent dark:from-blue-950/30 dark:via-indigo-950/10 dark:to-transparent shadow-md">
-          <CardContent className="p-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-600 text-white uppercase tracking-wider">
-                    <Play className="h-3 w-3 fill-current" /> Next Patient to Call
-                  </span>
-                  <span className="text-xs text-muted-foreground">Queue #{nextPatientToCall.queuePosition}</span>
-                  {nextPatientToCall.arrivalWindow && (
-                    <Badge variant="outline" className="border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-[10px] flex items-center gap-1 font-medium">
-                      <Waves className="h-3 w-3" />
-                      Arrival Window: {nextPatientToCall.arrivalWindow}
-                    </Badge>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
-                    <User className="h-5 w-5 text-blue-600" />
-                    {nextPatientToCall.patientName}
-                  </h3>
-                  <span className="text-xs font-semibold text-muted-foreground">
-                    Slot: {formatSlotRange(nextPatientToCall.scheduledStart, nextPatientToCall.scheduledEnd)}
-                  </span>
-                  {nextPatientToCall.checkedInAt && (
-                    <span className="text-xs text-amber-700 dark:text-amber-400 font-medium">
-                      (Checked in at {formatTimeIST(nextPatientToCall.checkedInAt)})
-                    </span>
-                  )}
-                  {nextPatientToCall.patientPhone && (
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Phone className="h-3 w-3" />
-                      {nextPatientToCall.patientPhone}
-                    </span>
-                  )}
-                </div>
-                {nextPatientToCall.reason && (
-                  <p className="text-xs text-muted-foreground pt-1">
-                    <strong>Complaint: </strong> {nextPatientToCall.reason}
-                  </p>
-                )}
+      {/* Currently Called / Consulting Doctor-wide Highlight */}
+      {data.activeDoctorCall && (
+        <Card className="border-indigo-500/40 bg-indigo-50/60 dark:bg-indigo-950/25 shadow-sm">
+          <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="h-10 w-10 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0">
+                <BellRing className="h-5 w-5 animate-pulse" />
               </div>
-
-              <div className="shrink-0 flex items-center gap-2">
-                <Button
-                  size="default"
-                  disabled={isPending}
-                  onClick={() => handleStartConsultation(nextPatientToCall.id)}
-                  className="gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-sm"
-                >
-                  <Play className="h-4 w-4 fill-current" />
-                  Call Patient Now
-                </Button>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+                  {data.activeDoctorCall.status === "CALLED"
+                    ? "Currently Called Patient"
+                    : "Current Patient In Consultation"}
+                </p>
+                <p className="text-base font-bold text-foreground mt-0.5">
+                  Token {data.activeDoctorCall.tokenLabel} — {data.activeDoctorCall.patientName}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {data.activeDoctorCall.subSlotLabel}
+                  {data.activeDoctorCall.calledAt
+                    ? ` • Called at ${formatTimeIST(data.activeDoctorCall.calledAt)}`
+                    : ""}
+                  {data.activeDoctorCall.actualStartAt
+                    ? ` • Started at ${formatTimeIST(data.activeDoctorCall.actualStartAt)}`
+                    : ""}
+                </p>
               </div>
             </div>
+
+            <Badge className="bg-indigo-600 text-white self-start sm:self-center">
+              {data.activeDoctorCall.status === "IN_CONSULTATION"
+                ? "In Consultation"
+                : "Called by Reception"}
+            </Badge>
           </CardContent>
         </Card>
       )}
 
-      {/* Live Queue Cards */}
-      {queueItems.length === 0 ? (
+      {data.subSlots.length === 0 ? (
         <Card className="border-dashed border-2">
           <CardContent className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
-            <Activity className="h-10 w-10 mb-3 opacity-30 text-primary" />
-            <h3 className="font-semibold text-foreground text-base">No Active Consultations in Queue</h3>
+            <Users className="h-10 w-10 mb-3 opacity-35 text-primary" />
+            <h3 className="font-semibold text-foreground text-base">
+              No Patients Scheduled in Today&apos;s Queue
+            </h3>
             <p className="text-sm mt-1 max-w-sm">
-              There are no pending, confirmed, or in-progress consultations scheduled for today.
+              Your confirmed sub-slot queues for today will appear here automatically.
             </p>
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-4">
-          {queueItems.map((item) => {
-            const streamConfig = STREAM_CONFIGS[item.stream];
-            const scheduledStart = new Date(item.scheduledStart);
-            const scheduledEnd = new Date(item.scheduledEnd);
-            const expectedStart = new Date(item.expectedStart);
-
-            return (
-              <Card
-                key={item.id}
-                className={`overflow-hidden border-border transition-all ${
-                  item.isCurrent
-                    ? "border-blue-500/60 shadow-md ring-1 ring-blue-500/30 bg-blue-50/20 dark:bg-blue-950/10"
-                    : "hover:border-primary/40 shadow-xs"
-                }`}
+        <>
+          {/* Read-Only Sub-Slot Tabs */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Sub-Slot Queues ({data.subSlots.length})
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                onClick={() => router.refresh()}
+                className="text-xs gap-1.5"
               >
-                <CardContent className="p-5">
-                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                    {/* Patient & Slot Details */}
-                    <div className="space-y-2.5">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold">
-                          #{item.queuePosition}
-                        </span>
-                        <span className="font-bold text-base text-foreground flex items-center gap-1.5">
-                          <User className="h-4 w-4 text-primary" />
-                          {item.patientName}
-                        </span>
-                        <span className={`inline-flex items-center text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full border ${streamConfig.badgeClassName}`}>
-                          {streamConfig.label}
-                        </span>
-                        {getStatusBadge(item.status)}
-                        {item.arrivalWindow && (
-                          <Badge variant="outline" className="border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-[10px] flex items-center gap-1 font-medium">
-                            <Waves className="h-3 w-3" />
-                            Arrival: {item.arrivalWindow}
-                          </Badge>
-                        )}
-                      </div>
+                <RefreshCw className="h-3.5 w-3.5" />
+                Refresh View
+              </Button>
+            </div>
 
-                      <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
-                        <span className="flex items-center gap-1 font-medium text-foreground">
-                          <Clock className="h-3.5 w-3.5 text-primary" />
-                          Scheduled: {formatSlotRange(scheduledStart, scheduledEnd)}
-                        </span>
-                        <span>•</span>
-                        <span className="flex items-center gap-1">
-                          Est. Start: <strong className="text-foreground">{formatTimeIST(expectedStart)}</strong>
-                          {item.roundedDelayMinutes > 0 && (
-                            <span className="text-rose-600 font-semibold ml-1">
-                              (+{item.roundedDelayMinutes} min approx)
-                            </span>
-                          )}
-                        </span>
-                        {item.patientPhone && (
-                          <>
-                            <span>•</span>
-                            <span className="flex items-center gap-1">
-                              <Phone className="h-3 w-3" />
-                              {item.patientPhone}
-                            </span>
-                          </>
-                        )}
-                      </div>
-
-                      {item.reason && (
-                        <p className="text-xs text-muted-foreground bg-muted/40 p-2.5 rounded-md border border-border/50 max-w-2xl">
-                          <strong className="text-foreground font-semibold">Chief Complaint / Reason: </strong>
-                          {item.reason}
-                        </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {data.subSlots.map((subSlot) => {
+                const isSelected = activeSubSlot?.queueScopeKey === subSlot.queueScopeKey;
+                return (
+                  <button
+                    key={subSlot.queueScopeKey}
+                    type="button"
+                    onClick={() => setSelectedScopeKey(subSlot.queueScopeKey)}
+                    className={`text-left p-3.5 rounded-xl border transition-all ${
+                      isSelected
+                        ? "border-primary bg-primary/5 ring-2 ring-primary/20 shadow-xs"
+                        : "border-border bg-card hover:border-primary/40"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-sm text-foreground">
+                        {subSlot.timeRangeLabel}
+                      </span>
+                      <Badge variant={isSelected ? "default" : "outline"} className="text-[10px]">
+                        {subSlot.kind === "WAVE_SLOT"
+                          ? "Wave Sub-slot"
+                          : subSlot.kind === "STREAM_WINDOW"
+                            ? "Stream"
+                            : "Slot"}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2.5 text-xs text-muted-foreground mt-1.5 flex-wrap">
+                      <span className="text-blue-600 dark:text-blue-400 font-semibold">
+                        {subSlot.summary.waiting} Checked In
+                      </span>
+                      <span>•</span>
+                      <span>{subSlot.summary.remaining} Active</span>
+                      <span>•</span>
+                      <span className="text-emerald-600 dark:text-emerald-400">
+                        {subSlot.summary.completed} Done
+                      </span>
+                      {subSlot.noShowCount > 0 && (
+                        <>
+                          <span>•</span>
+                          <span className="text-rose-600 dark:text-rose-400">
+                            {subSlot.noShowCount} Not Arrived
+                          </span>
+                        </>
                       )}
                     </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-                    {/* Action Controls */}
-                    <div className="flex items-center gap-2 shrink-0 flex-wrap pt-3 lg:pt-0 border-t lg:border-t-0 border-border">
-                      {item.canMarkArrived && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={isPending}
-                          onClick={() => handleMarkArrived(item.id)}
-                          className="gap-1.5 text-xs text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 hover:bg-amber-50 dark:hover:bg-amber-950/30"
-                        >
-                          <UserCheck className="h-3.5 w-3.5" />
-                          Mark Arrived
-                        </Button>
-                      )}
+          {activeSubSlot && (
+            <>
+              {/* Read-Only Summary Strip */}
+              <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+                <Card className="border-border shadow-xs">
+                  <CardHeader className="py-3 px-4">
+                    <CardDescription className="text-xs">Checked In</CardDescription>
+                    <CardTitle className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                      {activeSubSlot.summary.waiting}
+                    </CardTitle>
+                  </CardHeader>
+                </Card>
 
-                      {item.canStartConsultation && (
-                        <Button
-                          variant="default"
-                          size="sm"
-                          disabled={isPending}
-                          onClick={() => handleStartConsultation(item.id)}
-                          className="gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold"
-                        >
-                          <Play className="h-3.5 w-3.5" />
-                          Start Consultation
-                        </Button>
-                      )}
+                <Card className="border-border shadow-xs">
+                  <CardHeader className="py-3 px-4">
+                    <CardDescription className="text-xs">Called / Active</CardDescription>
+                    <CardTitle className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
+                      {activeSubSlot.summary.inProgress}
+                    </CardTitle>
+                  </CardHeader>
+                </Card>
 
-                      {item.canEndConsultation && (
-                        <Button
-                          variant="default"
-                          size="sm"
-                          disabled={isPending}
-                          onClick={() => handleEndConsultation(item.id)}
-                          className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
-                        >
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                          End Consultation
-                        </Button>
-                      )}
+                <Card className="border-border shadow-xs">
+                  <CardHeader className="py-3 px-4">
+                    <CardDescription className="text-xs">Remaining</CardDescription>
+                    <CardTitle className="text-2xl font-bold text-foreground">
+                      {activeSubSlot.summary.remaining}
+                    </CardTitle>
+                  </CardHeader>
+                </Card>
 
-                      {item.stream !== "PRIORITY" && (
-                        <Button
-                          variant="ghost"
-                          size="xs"
-                          disabled={isPending}
-                          onClick={() => handleSetPriority(item.id)}
-                          className="text-[11px] text-muted-foreground hover:text-rose-600"
-                        >
-                          Mark Priority
-                        </Button>
-                      )}
+                <Card className="border-border shadow-xs">
+                  <CardHeader className="py-3 px-4">
+                    <CardDescription className="text-xs">Completed</CardDescription>
+                    <CardTitle className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                      {activeSubSlot.summary.completed}
+                    </CardTitle>
+                  </CardHeader>
+                </Card>
 
-                      {item.canNoShow && (
-                        <Button
-                          variant="outline"
-                          size="xs"
-                          disabled={isPending}
-                          onClick={() => handleNoShow(item.id)}
-                          className="text-xs text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 border-rose-200 dark:border-rose-900"
-                        >
-                          <UserX className="h-3 w-3 mr-1" />
-                          No-Show
-                        </Button>
-                      )}
+                <Card className="border-border shadow-xs">
+                  <CardHeader className="py-3 px-4">
+                    <CardDescription className="text-xs">Not Arrived</CardDescription>
+                    <CardTitle className="text-2xl font-bold text-rose-600 dark:text-rose-400">
+                      {activeSubSlot.noShowCount}
+                    </CardTitle>
+                  </CardHeader>
+                </Card>
 
-                      {item.canCancel && (
-                        <Button
-                          variant="ghost"
-                          size="xs"
-                          disabled={isPending}
-                          onClick={() => handleCancel(item.id)}
-                          className="text-xs text-muted-foreground hover:text-destructive"
-                        >
-                          <Ban className="h-3 w-3 mr-1" />
-                          Cancel
-                        </Button>
-                      )}
-                    </div>
+                <Card className="border-border shadow-xs">
+                  <CardHeader className="py-3 px-4">
+                    <CardDescription className="text-xs">Est. Delay</CardDescription>
+                    <CardTitle
+                      className={`text-2xl font-bold ${
+                        activeSubSlot.summary.runningBehindMinutes > 0
+                          ? "text-rose-600"
+                          : "text-foreground"
+                      }`}
+                    >
+                      {activeSubSlot.summary.runningBehindMinutes > 0
+                        ? `${activeSubSlot.summary.runningBehindMinutes}m`
+                        : "On Time"}
+                    </CardTitle>
+                  </CardHeader>
+                </Card>
+              </div>
+
+              {/* Read-Only Up Next Summary Card (NO action buttons) */}
+              <Card className="border-primary/25 bg-primary/5 shadow-xs">
+                <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                      <Activity className="h-3.5 w-3.5" />
+                      {activeSubSlot.subSlotLabel}
+                    </p>
+                    {activeSubSlot.currentPatient ? (
+                      <p className="text-sm font-bold text-foreground">
+                        Current ({activeSubSlot.currentPatient.statusLabel}): Token{" "}
+                        {activeSubSlot.currentPatient.tokenLabel} —{" "}
+                        {activeSubSlot.currentPatient.patientName}
+                      </p>
+                    ) : activeSubSlot.nextInQueuePatient ? (
+                      <p className="text-sm font-bold text-foreground">
+                        Next Checked-In Patient: Token {activeSubSlot.nextInQueuePatient.tokenLabel} —{" "}
+                        {activeSubSlot.nextInQueuePatient.patientName}
+                      </p>
+                    ) : (
+                      <p className="text-sm font-medium text-muted-foreground">
+                        No checked-in patient waiting right now in this sub-slot.
+                      </p>
+                    )}
                   </div>
+                  <Badge variant="outline" className="text-[11px] w-fit">
+                    Controlled by Reception Desk
+                  </Badge>
                 </CardContent>
               </Card>
-            );
-          })}
-        </div>
+
+              {/* Read-Only Active Queue List */}
+              <div className="space-y-3">
+                <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
+                  <Hash className="h-4 w-4 text-primary" />
+                  Active Queue ({activeSubSlot.activePatients.length})
+                </h2>
+
+                {activeSubSlot.activePatients.length === 0 ? (
+                  <Card className="border-dashed border">
+                    <CardContent className="p-6 text-center text-xs text-muted-foreground">
+                      No active patients waiting in this sub-slot.
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="space-y-2.5">
+                    {activeSubSlot.activePatients.map(renderPatientRow)}
+                  </div>
+                )}
+              </div>
+
+              {/* Read-Only Completed Patients in This Sub-Slot */}
+              {activeSubSlot.completedPatients.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                    Completed ({activeSubSlot.completedPatients.length})
+                  </h2>
+                  <div className="space-y-2.5">
+                    {activeSubSlot.completedPatients.map(renderPatientRow)}
+                  </div>
+                </div>
+              )}
+
+              {/* Read-Only Not Arrived Patients in This Sub-Slot */}
+              {activeSubSlot.notArrivedPatients.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
+                    <UserX className="h-4 w-4 text-rose-600" />
+                    Not Arrived ({activeSubSlot.notArrivedPatients.length})
+                  </h2>
+                  <div className="space-y-2.5">
+                    {activeSubSlot.notArrivedPatients.map(renderPatientRow)}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </>
       )}
     </div>
   );

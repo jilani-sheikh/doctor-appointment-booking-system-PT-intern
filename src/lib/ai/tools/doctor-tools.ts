@@ -10,7 +10,7 @@ import {
   SlotStatus,
 } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
-import { canDoctorNoShow, isValidTransition } from "@/lib/appointment-status";
+import { isValidTransition } from "@/lib/appointment-status";
 import { previewScheduleAction } from "@/lib/actions/slots";
 import { discoverAlternativeAppointmentsForPatient } from "@/lib/actions/reschedule";
 import { calculateElasticRange, diffAvailabilityIntervals, effectiveSlot } from "@/lib/scheduling";
@@ -66,6 +66,7 @@ export function createDoctorTools(ctx: DoctorToolContext) {
             "ALL",
             "CONFIRMED",
             "CHECKED_IN",
+            "CALLED",
             "IN_CONSULTATION",
             "COMPLETED",
             "CANCELLED",
@@ -153,6 +154,7 @@ export function createDoctorTools(ctx: DoctorToolContext) {
             const active =
               appt.status === AppointmentStatus.CONFIRMED ||
               appt.status === AppointmentStatus.CHECKED_IN ||
+              appt.status === AppointmentStatus.CALLED ||
               appt.status === AppointmentStatus.IN_CONSULTATION;
             return active && w.end >= now;
           }
@@ -163,10 +165,6 @@ export function createDoctorTools(ctx: DoctorToolContext) {
         const items: AppointmentCardData[] = selected.map((appt) => {
           const window = effectiveSlot(appt);
           const latestPayment = appt.payments[0] ?? null;
-          const noShowCheck = canDoctorNoShow({
-            status: appt.status,
-            startTime: window.start,
-          });
 
           return {
             id: appt.id,
@@ -194,12 +192,9 @@ export function createDoctorTools(ctx: DoctorToolContext) {
               AppointmentStatus.CANCELLED,
               Role.DOCTOR
             ),
-            canDoctorComplete: isValidTransition(
-              appt.status,
-              AppointmentStatus.COMPLETED,
-              Role.DOCTOR
-            ),
-            canDoctorNoShow: noShowCheck.allowed,
+            canDoctorComplete: false,
+            canDoctorNoShow: false,
+            tokenNumber: appt.tokenNumber,
             availabilityId: appt.availability.id,
             notes: appt.reason,
           };
@@ -445,6 +440,7 @@ export function createDoctorTools(ctx: DoctorToolContext) {
                 in: [
                   AppointmentStatus.CONFIRMED,
                   AppointmentStatus.CHECKED_IN,
+                  AppointmentStatus.CALLED,
                   AppointmentStatus.IN_CONSULTATION,
                   AppointmentStatus.PENDING_PAYMENT,
                 ],
@@ -1090,6 +1086,7 @@ export function createDoctorTools(ctx: DoctorToolContext) {
         const activeStatuses = [
           AppointmentStatus.CONFIRMED,
           AppointmentStatus.CHECKED_IN,
+          AppointmentStatus.CALLED,
           AppointmentStatus.IN_CONSULTATION,
           AppointmentStatus.PENDING_PAYMENT,
         ];
@@ -1231,6 +1228,7 @@ export function createDoctorTools(ctx: DoctorToolContext) {
               in: [
                 AppointmentStatus.CONFIRMED,
                 AppointmentStatus.CHECKED_IN,
+                AppointmentStatus.CALLED,
                 AppointmentStatus.PENDING_PAYMENT,
               ],
             },
@@ -1520,6 +1518,7 @@ export function createDoctorTools(ctx: DoctorToolContext) {
               in: [
                 AppointmentStatus.CONFIRMED,
                 AppointmentStatus.CHECKED_IN,
+                AppointmentStatus.CALLED,
                 AppointmentStatus.PENDING_PAYMENT,
               ],
             },
@@ -1581,16 +1580,10 @@ export function createDoctorTools(ctx: DoctorToolContext) {
 
     prepareDoctorAppointmentAction: tool({
       description:
-        "Stage a signed confirmation card to cancel, mark completed, mark no-show, reschedule, or manually resolve one of the doctor's appointments.",
+        "Stage a signed confirmation card to cancel, reschedule, or manually resolve a disrupted appointment (queue completion and Not Arrived outcomes are handled strictly by the Reception Desk).",
       inputSchema: z.object({
         appointmentId: z.string().min(1),
-        action: z.enum([
-          "CANCEL",
-          "COMPLETE",
-          "MARK_NO_SHOW",
-          "RESCHEDULE",
-          "RESOLVE_MANUALLY",
-        ]),
+        action: z.enum(["CANCEL", "RESCHEDULE", "RESOLVE_MANUALLY"]),
         newAvailabilityId: z
           .string()
           .optional()
@@ -1663,64 +1656,6 @@ export function createDoctorTools(ctx: DoctorToolContext) {
                 ? "Doctor-initiated cancellation triggers a 100% patient refund."
                 : undefined,
             confirmLabel: "Cancel Appointment",
-          });
-          return { ok: true, requiresConfirmation: true, confirmation };
-        }
-
-        if (action === "COMPLETE") {
-          if (
-            !isValidTransition(
-              appt.status,
-              AppointmentStatus.COMPLETED,
-              Role.DOCTOR
-            )
-          ) {
-            return {
-              ok: false,
-              error: `Cannot mark ${appt.status} appointment as COMPLETED.`,
-            };
-          }
-          const confirmation = await createPendingConfirmation({
-            userId: ctx.userId,
-            role: "DOCTOR",
-            action: "DOCTOR_COMPLETE_APPOINTMENT",
-            payload: { appointmentId: appt.id },
-            title: `Complete Consultation – ${patientName}`,
-            summary: dateTimeLabel,
-            details: [
-              { label: "Patient", value: patientName },
-              { label: "Slot", value: dateTimeLabel },
-            ],
-            confirmLabel: "Mark Completed",
-          });
-          return { ok: true, requiresConfirmation: true, confirmation };
-        }
-
-        if (action === "MARK_NO_SHOW") {
-          if (
-            !isValidTransition(
-              appt.status,
-              AppointmentStatus.NO_SHOW,
-              Role.DOCTOR
-            )
-          ) {
-            return {
-              ok: false,
-              error: `Cannot mark ${appt.status} appointment as NO_SHOW.`,
-            };
-          }
-          const confirmation = await createPendingConfirmation({
-            userId: ctx.userId,
-            role: "DOCTOR",
-            action: "DOCTOR_MARK_NO_SHOW",
-            payload: { appointmentId: appt.id },
-            title: `Mark No-Show – ${patientName}`,
-            summary: dateTimeLabel,
-            details: [
-              { label: "Patient", value: patientName },
-              { label: "Slot", value: dateTimeLabel },
-            ],
-            confirmLabel: "Mark No-Show",
           });
           return { ok: true, requiresConfirmation: true, confirmation };
         }
