@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { formatDateTimeIST } from "@/lib/time";
 import { effectiveSlot } from "@/lib/scheduling";
+import { ReceptionistRoleToggle } from "./receptionist-role-toggle";
 
 export const metadata: Metadata = {
   title: "Admin Dashboard — Medrella",
@@ -35,6 +36,7 @@ export default async function AdminDashboardPage() {
     totalUsers,
     patientCount,
     doctorCount,
+    receptionistCount,
     adminCount,
     pendingDoctors,
     approvedDoctors,
@@ -52,6 +54,7 @@ export default async function AdminDashboardPage() {
     db.user.count(),
     db.user.count({ where: { role: Role.PATIENT } }),
     db.user.count({ where: { role: Role.DOCTOR } }),
+    db.user.count({ where: { role: Role.RECEPTIONIST } }),
     db.user.count({ where: { role: Role.ADMIN } }),
     db.doctor.count({ where: { status: DoctorStatus.PENDING } }),
     db.doctor.count({ where: { status: DoctorStatus.APPROVED } }),
@@ -102,6 +105,8 @@ export default async function AdminDashboardPage() {
         return <Badge variant="secondary" className="text-[10px] uppercase font-semibold">Patient</Badge>;
       case "DOCTOR":
         return <Badge variant="default" className="text-[10px] uppercase bg-blue-600 font-semibold">Doctor</Badge>;
+      case "RECEPTIONIST":
+        return <Badge variant="default" className="text-[10px] uppercase bg-teal-600 font-semibold">Receptionist</Badge>;
       case "ADMIN":
         return <Badge variant="default" className="text-[10px] uppercase bg-purple-600 font-semibold">Admin</Badge>;
       default:
@@ -186,6 +191,10 @@ export default async function AdminDashboardPage() {
             <div className="flex justify-between py-1 border-b border-border/50">
               <span className="text-muted-foreground">Doctors:</span>
               <span className="font-semibold text-foreground">{doctorCount}</span>
+            </div>
+            <div className="flex justify-between py-1 border-b border-border/50">
+              <span className="text-muted-foreground">Receptionists:</span>
+              <span className="font-semibold text-foreground">{receptionistCount}</span>
             </div>
             <div className="flex justify-between py-1">
               <span className="text-muted-foreground">Administrators:</span>
@@ -273,7 +282,7 @@ export default async function AdminDashboardPage() {
                 <TableRow className="bg-muted/40">
                   <TableHead className="text-xs font-semibold">User</TableHead>
                   <TableHead className="text-xs font-semibold">Role</TableHead>
-                  <TableHead className="text-xs font-semibold text-right">Joined</TableHead>
+                  <TableHead className="text-xs font-semibold text-right">Joined / Access</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -284,8 +293,9 @@ export default async function AdminDashboardPage() {
                       <span className="text-[11px] text-muted-foreground">{u.email}</span>
                     </TableCell>
                     <TableCell>{getRoleBadge(u.role)}</TableCell>
-                    <TableCell className="text-right text-muted-foreground">
-                      {formatDateTimeIST(u.createdAt)}
+                    <TableCell className="text-right text-muted-foreground space-y-1">
+                      <span className="block">{formatDateTimeIST(u.createdAt)}</span>
+                      <ReceptionistRoleToggle userId={u.id} currentRole={u.role} />
                     </TableCell>
                   </TableRow>
                 ))}

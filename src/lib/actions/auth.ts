@@ -1,6 +1,6 @@
 "use server";
 
-import { signIn, signOut, getCurrentUser } from "@/lib/auth";
+import { signIn, signOut, getCurrentUser, getRoleDashboardPath } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { isAdminEmail } from "@/lib/env";
 import bcrypt from "bcryptjs";
@@ -311,12 +311,7 @@ export async function completeOnboardingAction(data: OnboardingInput) {
   }
 
   if (user.role) {
-    const redirectUrl =
-      user.role === Role.DOCTOR
-        ? "/doctor/dashboard"
-        : user.role === Role.ADMIN
-        ? "/admin/dashboard"
-        : "/patient/dashboard";
+    const redirectUrl = getRoleDashboardPath(user.role);
 
     return {
       success: false,
@@ -388,12 +383,7 @@ export async function completeOnboardingAction(data: OnboardingInput) {
         select: { role: true },
       });
       const role = existingUser?.role || (validated.role === "DOCTOR" ? Role.DOCTOR : Role.PATIENT);
-      const redirectUrl =
-        role === Role.DOCTOR
-          ? "/doctor/dashboard"
-          : role === Role.ADMIN
-          ? "/admin/dashboard"
-          : "/patient/dashboard";
+      const redirectUrl = getRoleDashboardPath(role);
 
       return {
         success: false,
