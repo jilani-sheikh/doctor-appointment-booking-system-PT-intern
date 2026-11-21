@@ -1,8 +1,19 @@
 "use client";
 
-import { useEffect, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updateDoctorAppointmentStatusAction } from "@/lib/actions/doctor-appointments";
+import {
+  DOCTOR_HISTORY_ELIGIBLE_STATUSES,
+  DOCTOR_PRESCRIBE_ELIGIBLE_STATUSES,
+  formatPatientCode,
+} from "@/lib/medical-records";
+import {
+  PatientMedicalHistoryDrawer,
+  type DoctorHistoryTarget,
+  type DoctorPrescribeLaunchContext,
+} from "@/components/doctor/patient-history-drawer";
+import { CreatePrescriptionDialog } from "@/components/doctor/create-prescription-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,8 +24,10 @@ import {
   Clock,
   Ban,
   Phone,
+  Pill,
   User,
   FileText,
+  ClipboardList,
 } from "lucide-react";
 import { formatSlotDateTimeRangeIST } from "@/lib/time";
 import { STREAM_CONFIGS } from "@/lib/streams";
@@ -36,6 +49,10 @@ export function DoctorAppointmentsView({
 }: DoctorAppointmentsViewProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [historyTarget, setHistoryTarget] = useState<DoctorHistoryTarget | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [prescribeTarget, setPrescribeTarget] = useState<DoctorPrescribeLaunchContext | null>(null);
+  const [prescribeOpen, setPrescribeOpen] = useState(false);
 
   // Auto-refresh appointments every 30 seconds while tab is active and visible
   useEffect(() => {
@@ -104,6 +121,14 @@ export function DoctorAppointmentsView({
                   <User className="h-4 w-4 text-primary" />
                   {appt.patient.name}
                 </span>
+                <Badge variant="outline" className="text-[10px] font-mono">
+                  {appt.patient.patientCode ?? formatPatientCode(appt.patient.id)}
+                </Badge>
+                {typeof appt.tokenNumber === "number" && (
+                  <Badge className="bg-primary/15 text-primary border-primary/30 text-[10px] font-bold">
+                    Token #{appt.tokenNumber}
+                  </Badge>
+                )}
                 {getStatusBadge(appt.status)}
                 {appt.stream && (
                   <span
@@ -112,6 +137,11 @@ export function DoctorAppointmentsView({
                     {STREAM_CONFIGS[appt.stream]?.label ?? appt.stream}
                   </span>
                 )}
+                {(appt.prescriptionCount ?? 0) > 0 && (
+                  <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px]">
+                    Rx Issued ({appt.prescriptionCount})
+                  </Badge>
+                )}
               </div>
 
               <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
@@ -119,6 +149,7 @@ export function DoctorAppointmentsView({
                   <Clock className="h-3.5 w-3.5 text-primary" />
                   {formatSlotDateTimeRangeIST(startDate, endDate)}
                 </span>
+                {appt.patient.ageLabel && <span>Age: {appt.patient.ageLabel}</span>}
                 {appt.patient.phone && (
                   <span className="flex items-center gap-1 text-foreground/80">
                     <Phone className="h-3 w-3" />
@@ -141,8 +172,56 @@ export function DoctorAppointmentsView({
               )}
             </div>
 
-            {/* Actions based on transition table */}
+            {/* Actions based on transition table & clinical records */}
             <div className="flex flex-wrap items-center gap-2 shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-border">
+              {DOCTOR_HISTORY_ELIGIBLE_STATUSES.includes(appt.status) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  className="gap-1"
+                  onClick={() => {
+                    setHistoryTarget({
+                      patientId: appt.patient.id,
+                      appointmentId: appt.id,
+                      fallbackName: appt.patient.name,
+                      tokenLabel:
+                        typeof appt.tokenNumber === "number" ? `#${appt.tokenNumber}` : null,
+                    });
+                    setHistoryOpen(true);
+                  }}
+                >
+                  <ClipboardList className="h-3.5 w-3.5" />
+                  View History
+                </Button>
+              )}
+
+              {DOCTOR_PRESCRIBE_ELIGIBLE_STATUSES.includes(appt.status) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  className="gap-1 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+                  onClick={() => {
+                    setPrescribeTarget({
+                      patientId: appt.patient.id,
+                      appointmentId: appt.id,
+                      patientName: appt.patient.name,
+                      patientCode:
+                        appt.patient.patientCode ?? formatPatientCode(appt.patient.id),
+                      ageLabel: appt.patient.ageLabel ?? null,
+                      gender: appt.patient.gender ?? null,
+                      tokenLabel:
+                        typeof appt.tokenNumber === "number" ? `#${appt.tokenNumber}` : null,
+                    });
+                    setPrescribeOpen(true);
+                  }}
+                >
+                  <Pill className="h-3.5 w-3.5" />
+                  Write Prescription
+                </Button>
+              )}
+
               {(appt.status === "CHECKED_IN" || appt.status === "CALLED" || appt.status === "IN_CONSULTATION") && (
                 <Link href="/doctor/queue">
                   <Button
@@ -219,6 +298,23 @@ export function DoctorAppointmentsView({
             : <div className="space-y-4">{historyAppointments.map(renderAppointmentCard)}</div>}
         </TabsContent>
       </Tabs>
+
+      <PatientMedicalHistoryDrawer
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        target={historyTarget}
+        onWritePrescription={(ctx) => {
+          setHistoryOpen(false);
+          setPrescribeTarget(ctx);
+          setPrescribeOpen(true);
+        }}
+      />
+
+      <CreatePrescriptionDialog
+        open={prescribeOpen}
+        onOpenChange={setPrescribeOpen}
+        target={prescribeTarget}
+      />
     </div>
   );
 }

@@ -9,9 +9,11 @@ import {
   Activity,
   BellRing,
   CheckCircle2,
+  ClipboardList,
   Clock,
   Eye,
   Hash,
+  Pill,
   RefreshCw,
   User,
   UserX,
@@ -20,6 +22,13 @@ import {
 } from "lucide-react";
 import { formatSlotRange, formatTimeIST } from "@/lib/time";
 import { EMERGENCY_DISCLAIMER } from "@/lib/queue";
+import { DOCTOR_PRESCRIBE_ELIGIBLE_STATUSES } from "@/lib/medical-records";
+import {
+  PatientMedicalHistoryDrawer,
+  type DoctorHistoryTarget,
+  type DoctorPrescribeLaunchContext,
+} from "@/components/doctor/patient-history-drawer";
+import { CreatePrescriptionDialog } from "@/components/doctor/create-prescription-dialog";
 import type { AppointmentStatus } from "@/generated/prisma/enums";
 import type {
   DoctorLiveQueueData,
@@ -35,6 +44,10 @@ export function DoctorQueueView({ data }: DoctorQueueViewProps) {
   const [selectedScopeKey, setSelectedScopeKey] = useState<string>(
     data.defaultSelectedScopeKey ?? ""
   );
+  const [historyTarget, setHistoryTarget] = useState<DoctorHistoryTarget | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [prescribeTarget, setPrescribeTarget] = useState<DoctorPrescribeLaunchContext | null>(null);
+  const [prescribeOpen, setPrescribeOpen] = useState(false);
 
   // Live auto-refresh every 15 seconds while tab is active and visible
   useEffect(() => {
@@ -134,10 +147,23 @@ export function DoctorQueueView({ data }: DoctorQueueViewProps) {
                 <User className="h-3.5 w-3.5 text-muted-foreground" />
                 {row.patientName}
               </span>
+              <Badge variant="outline" className="text-[10px] font-mono">
+                {row.patientCode}
+              </Badge>
+              {(row.patientAgeLabel || row.patientGender) && (
+                <span className="text-[11px] text-muted-foreground">
+                  ({[row.patientAgeLabel, row.patientGender].filter(Boolean).join(" • ")})
+                </span>
+              )}
               {renderStatusBadge(row.status, row.statusLabel)}
               {row.queuePosition !== null && !row.isCurrent && (
                 <Badge variant="outline" className="text-[10px] font-medium">
                   Queue #{row.queuePosition}
+                </Badge>
+              )}
+              {row.prescriptionCount > 0 && (
+                <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-semibold">
+                  Rx Issued ({row.prescriptionCount})
                 </Badge>
               )}
               <span className="text-[11px] text-muted-foreground">
@@ -208,6 +234,53 @@ export function DoctorQueueView({ data }: DoctorQueueViewProps) {
             </div>
           </div>
         </div>
+
+        {/* Clinical History & Prescription Actions (queue stays strictly read-only) */}
+        <div className="flex items-center gap-2 flex-wrap shrink-0 sm:justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            className="gap-1"
+            onClick={() => {
+              setHistoryTarget({
+                patientId: row.patientId,
+                appointmentId: row.id,
+                fallbackName: row.patientName,
+                tokenLabel: row.tokenLabel,
+                subSlotLabel: row.subSlotLabel,
+              });
+              setHistoryOpen(true);
+            }}
+          >
+            <ClipboardList className="h-3.5 w-3.5" />
+            View History
+          </Button>
+          {DOCTOR_PRESCRIBE_ELIGIBLE_STATUSES.includes(row.status) && (
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              className="gap-1 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+              onClick={() => {
+                setPrescribeTarget({
+                  patientId: row.patientId,
+                  appointmentId: row.id,
+                  patientName: row.patientName,
+                  patientCode: row.patientCode,
+                  ageLabel: row.patientAgeLabel,
+                  gender: row.patientGender,
+                  tokenLabel: row.tokenLabel,
+                  subSlotLabel: row.subSlotLabel,
+                });
+                setPrescribeOpen(true);
+              }}
+            >
+              <Pill className="h-3.5 w-3.5" />
+              Write Prescription
+            </Button>
+          )}
+        </div>
       </div>
     );
   };
@@ -241,8 +314,18 @@ export function DoctorQueueView({ data }: DoctorQueueViewProps) {
                     ? "Currently Called Patient"
                     : "Current Patient In Consultation"}
                 </p>
-                <p className="text-base font-bold text-foreground mt-0.5">
-                  Token {data.activeDoctorCall.tokenLabel} — {data.activeDoctorCall.patientName}
+                <p className="text-base font-bold text-foreground mt-0.5 flex items-center gap-2 flex-wrap">
+                  <span>
+                    Token {data.activeDoctorCall.tokenLabel} — {data.activeDoctorCall.patientName}
+                  </span>
+                  <Badge variant="outline" className="text-[10px] font-mono">
+                    {data.activeDoctorCall.patientCode}
+                  </Badge>
+                  {(data.activeDoctorCall.patientAgeLabel || data.activeDoctorCall.patientGender) && (
+                    <span className="text-xs font-normal text-muted-foreground">
+                      ({[data.activeDoctorCall.patientAgeLabel, data.activeDoctorCall.patientGender].filter(Boolean).join(" • ")})
+                    </span>
+                  )}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {data.activeDoctorCall.subSlotLabel}
@@ -256,11 +339,56 @@ export function DoctorQueueView({ data }: DoctorQueueViewProps) {
               </div>
             </div>
 
-            <Badge className="bg-indigo-600 text-white self-start sm:self-center">
-              {data.activeDoctorCall.status === "IN_CONSULTATION"
-                ? "In Consultation"
-                : "Called by Reception"}
-            </Badge>
+            <div className="flex items-center gap-2 flex-wrap self-start sm:self-center">
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                className="gap-1 bg-background"
+                onClick={() => {
+                  if (!data.activeDoctorCall) return;
+                  setHistoryTarget({
+                    patientId: data.activeDoctorCall.patientId,
+                    appointmentId: data.activeDoctorCall.appointmentId,
+                    fallbackName: data.activeDoctorCall.patientName,
+                    tokenLabel: data.activeDoctorCall.tokenLabel,
+                    subSlotLabel: data.activeDoctorCall.subSlotLabel,
+                  });
+                  setHistoryOpen(true);
+                }}
+              >
+                <ClipboardList className="h-3.5 w-3.5" />
+                View History
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                className="gap-1 bg-background border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
+                onClick={() => {
+                  if (!data.activeDoctorCall) return;
+                  setPrescribeTarget({
+                    patientId: data.activeDoctorCall.patientId,
+                    appointmentId: data.activeDoctorCall.appointmentId,
+                    patientName: data.activeDoctorCall.patientName,
+                    patientCode: data.activeDoctorCall.patientCode,
+                    ageLabel: data.activeDoctorCall.patientAgeLabel,
+                    gender: data.activeDoctorCall.patientGender,
+                    tokenLabel: data.activeDoctorCall.tokenLabel,
+                    subSlotLabel: data.activeDoctorCall.subSlotLabel,
+                  });
+                  setPrescribeOpen(true);
+                }}
+              >
+                <Pill className="h-3.5 w-3.5" />
+                Write Prescription
+              </Button>
+              <Badge className="bg-indigo-600 text-white">
+                {data.activeDoctorCall.status === "IN_CONSULTATION"
+                  ? "In Consultation"
+                  : "Called by Reception"}
+              </Badge>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -495,6 +623,23 @@ export function DoctorQueueView({ data }: DoctorQueueViewProps) {
           )}
         </>
       )}
+
+      <PatientMedicalHistoryDrawer
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        target={historyTarget}
+        onWritePrescription={(ctx) => {
+          setHistoryOpen(false);
+          setPrescribeTarget(ctx);
+          setPrescribeOpen(true);
+        }}
+      />
+
+      <CreatePrescriptionDialog
+        open={prescribeOpen}
+        onOpenChange={setPrescribeOpen}
+        target={prescribeTarget}
+      />
     </div>
   );
 }

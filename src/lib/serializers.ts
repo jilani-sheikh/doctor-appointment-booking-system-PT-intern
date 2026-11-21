@@ -19,6 +19,7 @@ import {
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
 import { effectiveSlot, type ThreeLevelAlternativeSuggestions } from "@/lib/scheduling";
 import { formatSubSlotLabel } from "@/lib/queue-tokens";
+import { calculateAgeYears, formatPatientCode } from "@/lib/medical-records";
 
 /**
  * Minimal serializable user representation passed across the Server-to-Client component boundary.
@@ -319,6 +320,8 @@ export interface SerializedDoctorAppointment {
   status: AppointmentStatus;
   stream: VisitStream;
   reason?: string | null;
+  tokenNumber?: number | null;
+  prescriptionCount?: number;
   createdAt: string;
   cancelledAt?: string | null;
   checkedInAt?: string | null;
@@ -328,9 +331,11 @@ export interface SerializedDoctorAppointment {
   canNoShow: boolean;
   patient: {
     id: string;
+    patientCode?: string;
     name: string;
     phone?: string | null;
     gender?: string | null;
+    ageLabel?: string | null;
   };
 }
 
@@ -340,6 +345,8 @@ export function toDoctorAppointmentDto(
     status: AppointmentStatus;
     stream: VisitStream;
     reason?: string | null;
+    tokenNumber?: number | null;
+    _count?: { prescriptions?: number };
     createdAt: Date;
     cancelledAt?: Date | null;
     checkedInAt?: Date | null;
@@ -353,6 +360,7 @@ export function toDoctorAppointmentDto(
       id: string;
       phone?: string | null;
       gender?: string | null;
+      dateOfBirth?: Date | null;
       user: {
         name?: string | null;
       };
@@ -361,12 +369,15 @@ export function toDoctorAppointmentDto(
   now: Date
 ): SerializedDoctorAppointment {
   const appointmentSlot = effectiveSlot({ slotStart: appt.slotStart ?? null, slotEnd: appt.slotEnd ?? null, availability: appt.availability });
+  const ageYears = calculateAgeYears(appt.patient.dateOfBirth, now);
 
   return {
     id: appt.id,
     status: appt.status,
     stream: appt.stream,
     reason: appt.reason,
+    tokenNumber: appt.tokenNumber ?? null,
+    prescriptionCount: appt._count?.prescriptions ?? 0,
     createdAt: appt.createdAt.toISOString(),
     cancelledAt: appt.cancelledAt ? appt.cancelledAt.toISOString() : null,
     checkedInAt: appt.checkedInAt ? appt.checkedInAt.toISOString() : null,
@@ -376,9 +387,11 @@ export function toDoctorAppointmentDto(
     canNoShow: false,
     patient: {
       id: appt.patient.id,
+      patientCode: formatPatientCode(appt.patient.id),
       name: appt.patient.user.name ?? "Patient",
       phone: appt.patient.phone,
       gender: appt.patient.gender,
+      ageLabel: ageYears !== null ? `${ageYears} yrs` : null,
     },
   };
 }

@@ -19,6 +19,7 @@ import {
 import { effectiveSlot } from "@/lib/scheduling";
 import { getISTDateString } from "@/lib/time";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
+import { calculateAgeYears, formatPatientCode } from "@/lib/medical-records";
 
 export interface DoctorQueueSourceAppointment {
   id: string;
@@ -35,8 +36,13 @@ export interface DoctorQueueSourceAppointment {
   createdAt: Date;
   slotStart: Date | null;
   slotEnd: Date | null;
+  _count?: {
+    prescriptions?: number;
+  };
   patient: {
     id: string;
+    dateOfBirth?: Date | null;
+    gender?: string | null;
     user: {
       name: string | null;
     };
@@ -57,7 +63,12 @@ export interface DoctorQueueSourceAppointment {
 
 export interface DoctorQueuePatientRow {
   id: string;
+  patientId: string;
+  patientCode: string;
   patientName: string;
+  patientAgeLabel: string | null;
+  patientGender: string | null;
+  prescriptionCount: number;
   status: AppointmentStatus;
   statusLabel: string;
   tokenNumber: number | null;
@@ -100,7 +111,11 @@ export interface DoctorLiveQueueData {
   todayDateIST: string;
   activeDoctorCall: {
     appointmentId: string;
+    patientId: string;
+    patientCode: string;
     patientName: string;
+    patientAgeLabel: string | null;
+    patientGender: string | null;
     tokenNumber: number | null;
     tokenLabel: string;
     queueScopeKey: string;
@@ -172,7 +187,14 @@ export function buildDoctorLiveQueueData(
   const activeDoctorCall = globalActiveAppt
     ? {
         appointmentId: globalActiveAppt.id,
+        patientId: globalActiveAppt.patient.id,
+        patientCode: formatPatientCode(globalActiveAppt.patient.id),
         patientName: globalActiveAppt.patient.user.name ?? "Patient",
+        patientAgeLabel: (() => {
+          const age = calculateAgeYears(globalActiveAppt.patient.dateOfBirth, now);
+          return age !== null ? `${age} yrs` : null;
+        })(),
+        patientGender: globalActiveAppt.patient.gender ?? null,
         tokenNumber: globalActiveAppt.tokenNumber,
         tokenLabel:
           typeof globalActiveAppt.tokenNumber === "number"
@@ -224,9 +246,15 @@ export function buildDoctorLiveQueueData(
     const toRow = (appt: DoctorQueueSourceAppointment): DoctorQueuePatientRow => {
       const slot = effectiveSlot(appt);
       const est = estimates.get(appt.id);
+      const ageYears = calculateAgeYears(appt.patient.dateOfBirth, now);
       return {
         id: appt.id,
+        patientId: appt.patient.id,
+        patientCode: formatPatientCode(appt.patient.id),
         patientName: appt.patient.user.name ?? "Patient",
+        patientAgeLabel: ageYears !== null ? `${ageYears} yrs` : null,
+        patientGender: appt.patient.gender ?? null,
+        prescriptionCount: appt._count?.prescriptions ?? 0,
         status: appt.status,
         statusLabel: getQueueStatusLabel(appt.status),
         tokenNumber: appt.tokenNumber,

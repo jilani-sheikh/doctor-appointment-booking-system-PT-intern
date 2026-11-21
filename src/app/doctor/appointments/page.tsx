@@ -60,6 +60,11 @@ export default async function DoctorAppointmentsPage() {
           },
         },
       },
+      _count: {
+        select: {
+          prescriptions: true,
+        },
+      },
     },
     orderBy: {
       availability: {
