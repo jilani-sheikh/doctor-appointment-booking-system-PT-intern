@@ -2,6 +2,7 @@ import type {
   Role,
   DoctorStatus,
   SlotStatus,
+  AvailabilityKind,
   AppointmentStatus,
   RescheduleLifecycleStatus,
   VisitStream,
@@ -14,10 +15,10 @@ import {
   canPatientCheckIn,
   canPatientCancel,
   canPatientReschedule,
-  canDoctorNoShow,
 } from "@/lib/appointment-status";
 import { formatWaveArrivalWindowIST } from "@/lib/waves";
 import { effectiveSlot, type ThreeLevelAlternativeSuggestions } from "@/lib/scheduling";
+import { formatSubSlotLabel } from "@/lib/queue-tokens";
 
 /**
  * Minimal serializable user representation passed across the Server-to-Client component boundary.
@@ -136,8 +137,12 @@ export interface SerializedPatientAppointment {
   createdAt: string;
   cancelledAt?: string | null;
   checkedInAt?: string | null;
+  calledAt?: string | null;
   slotStartTime: string;
   slotEndTime: string;
+  tokenNumber?: number | null;
+  queueScopeKey?: string | null;
+  subSlotLabel?: string | null;
   canCheckIn: boolean;
   canCancel: boolean;
   canReschedule: boolean;
@@ -172,6 +177,9 @@ export function toPatientAppointmentDto(
     createdAt: Date;
     cancelledAt?: Date | null;
     checkedInAt?: Date | null;
+    calledAt?: Date | null;
+    tokenNumber?: number | null;
+    queueScopeKey?: string | null;
     rescheduleCount: number;
     disruptedAt?: Date | null;
     disruptionReason?: string | null;
@@ -191,6 +199,8 @@ export function toPatientAppointmentDto(
       status: string;
     }>;
     availability: {
+      id?: string;
+      kind?: AvailabilityKind;
       startTime: Date;
       endTime: Date;
       doctor: {
@@ -253,6 +263,14 @@ export function toPatientAppointmentDto(
 
   const latestPayment = appt.payments && appt.payments.length > 0 ? appt.payments[0] : undefined;
 
+  const subSlotLabel = formatSubSlotLabel({
+    kind: appt.availability.kind ?? null,
+    availabilityStart: appt.availability.startTime,
+    availabilityEnd: appt.availability.endTime,
+    slotStart: appt.slotStart ?? null,
+    slotEnd: appt.slotEnd ?? null,
+  });
+
   return {
     id: appt.id,
     status: appt.status,
@@ -261,8 +279,12 @@ export function toPatientAppointmentDto(
     createdAt: appt.createdAt.toISOString(),
     cancelledAt: appt.cancelledAt ? appt.cancelledAt.toISOString() : null,
     checkedInAt: appt.checkedInAt ? appt.checkedInAt.toISOString() : null,
+    calledAt: appt.calledAt ? appt.calledAt.toISOString() : null,
     slotStartTime: appointmentSlot.start.toISOString(),
     slotEndTime: appointmentSlot.end.toISOString(),
+    tokenNumber: appt.tokenNumber ?? null,
+    queueScopeKey: appt.queueScopeKey ?? null,
+    subSlotLabel,
     canCheckIn: checkInEval.allowed,
     canCancel: cancelEval.allowed,
     canReschedule: rescheduleEval.allowed,
@@ -339,13 +361,6 @@ export function toDoctorAppointmentDto(
   now: Date
 ): SerializedDoctorAppointment {
   const appointmentSlot = effectiveSlot({ slotStart: appt.slotStart ?? null, slotEnd: appt.slotEnd ?? null, availability: appt.availability });
-  const noShowEval = canDoctorNoShow(
-    {
-      status: appt.status,
-      startTime: appointmentSlot.start,
-    },
-    now
-  );
 
   return {
     id: appt.id,
@@ -358,7 +373,7 @@ export function toDoctorAppointmentDto(
     slotStartTime: appointmentSlot.start.toISOString(),
     slotEndTime: appointmentSlot.end.toISOString(),
     isPastStartTime: now >= appointmentSlot.start,
-    canNoShow: noShowEval.allowed,
+    canNoShow: false,
     patient: {
       id: appt.patient.id,
       name: appt.patient.user.name ?? "Patient",
@@ -435,14 +450,11 @@ export function toDoctorQueueItemDto(
   },
   now: Date
 ): SerializedDoctorQueueItem {
+  void now;
   const appointmentSlot = effectiveSlot({ slotStart: appt.slotStart ?? null, slotEnd: appt.slotEnd ?? null, availability: appt.availability });
-  const canMarkArrived = appt.status === "CONFIRMED";
-  const canStartConsultation = appt.status === "CHECKED_IN";
-  const canEndConsultation = appt.status === "IN_CONSULTATION";
-  const noShowEval = canDoctorNoShow(
-    { status: appt.status, startTime: appointmentSlot.start },
-    now
-  );
+  const canMarkArrived = false;
+  const canStartConsultation = false;
+  const canEndConsultation = false;
   const canCancel =
     appt.status === "PENDING" ||
     appt.status === "CONFIRMED" ||
@@ -475,7 +487,7 @@ export function toDoctorQueueItemDto(
     canMarkArrived,
     canStartConsultation,
     canEndConsultation,
-    canNoShow: noShowEval.allowed,
+    canNoShow: false,
     canCancel,
     arrivalWindow,
     waveStatus: appt.wave?.status ?? null,

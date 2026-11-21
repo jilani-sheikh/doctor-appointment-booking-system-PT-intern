@@ -26,6 +26,7 @@ export const ACTIVE_STATUSES: readonly AppointmentStatus[] = [
   AppointmentStatus.PENDING,
   AppointmentStatus.CONFIRMED,
   AppointmentStatus.CHECKED_IN,
+  AppointmentStatus.CALLED,
   AppointmentStatus.IN_CONSULTATION,
 ];
 
@@ -46,7 +47,11 @@ export function canPatientCheckIn(
   now: Date = new Date()
 ): { allowed: boolean; reason?: string } {
   if (appt.status !== AppointmentStatus.CONFIRMED) {
-    if (appt.status === AppointmentStatus.CHECKED_IN || appt.status === AppointmentStatus.IN_CONSULTATION) {
+    if (
+      appt.status === AppointmentStatus.CHECKED_IN ||
+      appt.status === AppointmentStatus.CALLED ||
+      appt.status === AppointmentStatus.IN_CONSULTATION
+    ) {
       return { allowed: false, reason: "Already checked in." };
     }
     return { allowed: false, reason: "Only confirmed appointments can be checked in." };
@@ -78,17 +83,21 @@ export function canPatientCheckIn(
 }
 
 /**
- * Evaluates whether a doctor can record an appointment as a No-Show.
- * Allowed only after slot start time + 15 minutes grace period.
+ * Evaluates whether clinic reception staff can mark an appointment as Not Arrived (No-Show).
+ * Allowed only after scheduled slot start time + 15 minutes grace period.
  */
-export function canDoctorNoShow(
+export function canMarkNoShow(
   appt: { status: AppointmentStatus; startTime: Date | string | number },
   now: Date = new Date()
 ): { allowed: boolean; reason?: string } {
-  if (appt.status !== AppointmentStatus.CONFIRMED && appt.status !== AppointmentStatus.CHECKED_IN) {
+  if (
+    appt.status !== AppointmentStatus.CONFIRMED &&
+    appt.status !== AppointmentStatus.CHECKED_IN &&
+    appt.status !== AppointmentStatus.CALLED
+  ) {
     return {
       allowed: false,
-      reason: `Cannot record No-Show for appointment in ${appt.status} status.`,
+      reason: `Cannot record Not Arrived for appointment in ${appt.status} status.`,
     };
   }
 
@@ -105,6 +114,11 @@ export function canDoctorNoShow(
 
   return { allowed: true };
 }
+
+/**
+ * Backwards-compatible alias for `canMarkNoShow`.
+ */
+export const canDoctorNoShow = canMarkNoShow;
 
 /**
  * Evaluates whether a patient can cancel their appointment.
@@ -192,6 +206,117 @@ export function canPatientReschedule(
 }
 
 /**
+ * Evaluates whether clinic desk staff (Receptionist only) can check in a patient.
+ * Doctors and Admins cannot perform clinic check-in (Patients use 30m self check-in; Reception Desk handles walk-in arrivals).
+ */
+export function canStaffCheckIn(
+  appt: { status: AppointmentStatus },
+  actorRole: Role | null | undefined
+): { allowed: boolean; alreadyCheckedIn: boolean; reason?: string } {
+  if (actorRole !== Role.RECEPTIONIST) {
+    return {
+      allowed: false,
+      alreadyCheckedIn: false,
+      reason: "Unauthorized role for clinic desk check-in.",
+    };
+  }
+
+  if (
+    appt.status === AppointmentStatus.CHECKED_IN ||
+    appt.status === AppointmentStatus.CALLED ||
+    appt.status === AppointmentStatus.IN_CONSULTATION
+  ) {
+    return {
+      allowed: false,
+      alreadyCheckedIn: true,
+      reason: "Patient is already checked in.",
+    };
+  }
+
+  if (appt.status !== AppointmentStatus.CONFIRMED) {
+    return {
+      allowed: false,
+      alreadyCheckedIn: false,
+      reason: `Only confirmed appointments can be checked in. Current status: ${appt.status}.`,
+    };
+  }
+
+  return { allowed: true, alreadyCheckedIn: false };
+}
+
+/**
+ * Evaluates whether clinic desk staff (Receptionist only) can call the next patient (CHECKED_IN -> CALLED).
+ * Doctors have read-only queue access and Admins have no operational queue workflow.
+ */
+export function canReceptionistCallNext(
+  appt: { status: AppointmentStatus },
+  actorRole: Role | null | undefined
+): { allowed: boolean; reason?: string } {
+  if (actorRole !== Role.RECEPTIONIST) {
+    return { allowed: false, reason: "Only authorized clinic reception staff can call the next patient." };
+  }
+  if (appt.status !== AppointmentStatus.CHECKED_IN) {
+    return {
+      allowed: false,
+      reason: `Only checked-in patients can be called. Current status: ${appt.status}.`,
+    };
+  }
+  return { allowed: true };
+}
+
+/**
+ * Evaluates whether clinic desk staff (Receptionist only) can start a consultation (CALLED -> IN_CONSULTATION).
+ */
+export function canReceptionistStartConsultation(
+  appt: { status: AppointmentStatus },
+  actorRole: Role | null | undefined
+): { allowed: boolean; reason?: string } {
+  if (actorRole !== Role.RECEPTIONIST) {
+    return {
+      allowed: false,
+      reason: "Unauthorized role for starting consultation.",
+    };
+  }
+  if (appt.status !== AppointmentStatus.CALLED) {
+    return {
+      allowed: false,
+      reason: `Consultation can only be started once the patient has been called. Current status: ${appt.status}.`,
+    };
+  }
+  return { allowed: true };
+}
+
+/**
+ * Backwards-compatible helper rejecting doctors/admins and enforcing desk-staff Call Next rules.
+ */
+export const canDoctorCallNext = canReceptionistCallNext;
+
+/**
+ * Evaluates whether Receptionist can mark an appointment COMPLETED.
+ * Requires the consultation to be in progress (`IN_CONSULTATION`).
+ */
+export function canReceptionistComplete(
+  appt: { status: AppointmentStatus },
+  actorRole: Role | null | undefined
+): { allowed: boolean; reason?: string } {
+  if (actorRole !== Role.RECEPTIONIST) {
+    return {
+      allowed: false,
+      reason: "Unauthorized role for marking consultation completed.",
+    };
+  }
+
+  if (appt.status !== AppointmentStatus.IN_CONSULTATION) {
+    return {
+      allowed: false,
+      reason: `Only in-consultation appointments can be marked completed. Current status: ${appt.status}.`,
+    };
+  }
+
+  return { allowed: true };
+}
+
+/**
  * Validates whether a requested status transition is clinically and role permissible.
  */
 export function isValidTransition(
@@ -206,37 +331,52 @@ export function isValidTransition(
   switch (current) {
     case AppointmentStatus.PENDING:
       if (target === AppointmentStatus.CONFIRMED) {
-        return role === Role.ADMIN; // Legacy path usable by admin or data migration; doctors do not confirm bookings
+        return role === Role.ADMIN; // Legacy path usable by admin or data migration; doctors and receptionists do not confirm bookings
       }
       if (target === AppointmentStatus.CANCELLED) {
-        return true; // patient, doctor, or admin
+        return role === Role.PATIENT || role === Role.DOCTOR || role === Role.ADMIN;
       }
       return false;
 
     case AppointmentStatus.CONFIRMED:
       if (target === AppointmentStatus.CHECKED_IN) {
-        return true; // patient self check-in, or doctor/admin override
+        return role === Role.PATIENT || role === Role.RECEPTIONIST;
       }
       if (target === AppointmentStatus.CANCELLED) {
-        return true;
+        return role === Role.PATIENT || role === Role.DOCTOR || role === Role.ADMIN;
       }
       if (target === AppointmentStatus.NO_SHOW) {
-        return role === Role.DOCTOR || role === Role.ADMIN;
+        return role === Role.RECEPTIONIST;
       }
       return false;
 
     case AppointmentStatus.CHECKED_IN:
-      if (target === AppointmentStatus.IN_CONSULTATION) {
-        return role === Role.DOCTOR;
+      if (target === AppointmentStatus.CALLED) {
+        return role === Role.RECEPTIONIST;
       }
-      if (target === AppointmentStatus.CANCELLED || target === AppointmentStatus.NO_SHOW) {
+      if (target === AppointmentStatus.NO_SHOW) {
+        return role === Role.RECEPTIONIST;
+      }
+      if (target === AppointmentStatus.CANCELLED) {
+        return role === Role.DOCTOR || role === Role.ADMIN;
+      }
+      return false;
+
+    case AppointmentStatus.CALLED:
+      if (target === AppointmentStatus.IN_CONSULTATION) {
+        return role === Role.RECEPTIONIST;
+      }
+      if (target === AppointmentStatus.NO_SHOW) {
+        return role === Role.RECEPTIONIST;
+      }
+      if (target === AppointmentStatus.CANCELLED) {
         return role === Role.DOCTOR || role === Role.ADMIN;
       }
       return false;
 
     case AppointmentStatus.IN_CONSULTATION:
       if (target === AppointmentStatus.COMPLETED) {
-        return role === Role.DOCTOR;
+        return role === Role.RECEPTIONIST;
       }
       return false;
 

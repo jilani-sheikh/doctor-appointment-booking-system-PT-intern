@@ -11,6 +11,7 @@ enum Role {
   PATIENT
   DOCTOR
   ADMIN
+  RECEPTIONIST
 }
 
 enum DoctorStatus {
@@ -52,6 +53,7 @@ enum AppointmentStatus {
   PENDING_PAYMENT
   CONFIRMED
   CHECKED_IN
+  CALLED
   IN_CONSULTATION
   COMPLETED
   CANCELLED
@@ -84,6 +86,7 @@ enum NotificationType {
   SLOT_AVAILABLE
   WAVE_PUBLISHED
   QUEUE_DELAY
+  QUEUE_CALLED
   GENERAL
 }
 
@@ -303,6 +306,7 @@ model Availability {
   kind                AvailabilityKind @default(SINGLE)
   capacity            Int        @default(1)
   activeCount         Int        @default(0) @map("active_count")
+  tokenCounter        Int        @default(0) @map("token_counter")
   scheduleId          String?    @map("schedule_id")
   parentId            String?    @map("parent_id")
   exceptionId         String?    @map("exception_id")
@@ -331,8 +335,16 @@ model Appointment {
   stream                        VisitStream       @default(NEW_CONSULTATION)
   reason                        String?           @db.Text
   status                        AppointmentStatus @default(PENDING)
+  tokenNumber                   Int?              @map("token_number")
+  queueScopeKey                 String?           @map("queue_scope_key")
   checkedInAt                   DateTime?         @map("checked_in_at")
   checkedInByUserId             String?           @map("checked_in_by_user_id")
+  calledAt                      DateTime?         @map("called_at")
+  calledByUserId                String?           @map("called_by_user_id")
+  noShowAt                      DateTime?         @map("no_show_at")
+  noShowByUserId                String?           @map("no_show_by_user_id")
+  completedAt                   DateTime?         @map("completed_at")
+  completedByUserId             String?           @map("completed_by_user_id")
   actualStartAt                 DateTime?         @map("actual_start_at")
   actualEndAt                   DateTime?         @map("actual_end_at")
   waveId                        String?           @map("wave_id")
@@ -359,8 +371,10 @@ model Appointment {
   refunds                     Refund[]
   notificationDeliveries      NotificationDelivery[]
 
+  @@unique([queueScopeKey, tokenNumber])
   @@index([patientId])
   @@index([availabilityId])
+  @@index([queueScopeKey])
   @@index([waveId])
   @@index([status])
   @@index([rescheduledFromAvailabilityId])

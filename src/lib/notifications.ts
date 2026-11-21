@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
-import { NotificationType, type Notification } from "@/generated/prisma/client";
-import { calculateQueueEstimates, type QueueAppointmentItem } from "@/lib/queue";
+import { AppointmentStatus, NotificationType, type Notification } from "@/generated/prisma/client";
+import { calculateSubSlotQueues, type SubSlotQueueItem } from "@/lib/queue";
+import { buildSubSlotQueueScopeKey } from "@/lib/queue-tokens";
 import { getTodayISTDateString, getISTDateString } from "@/lib/time";
 import { effectiveSlot } from "@/lib/scheduling";
 
@@ -78,12 +79,14 @@ export async function checkAndNotifyQueueDelay(doctorId: string): Promise<number
       },
     });
 
-    // Filter appointments for today IST
+    // Filter appointments for today IST (excluding unpaid holds)
     const todayAppts = rawAppointments.filter(
-      (a) => getISTDateString(effectiveSlot(a).start) === todayIST
+      (a) =>
+        a.status !== AppointmentStatus.PENDING_PAYMENT &&
+        getISTDateString(effectiveSlot(a).start) === todayIST
     );
 
-    const queueItems: QueueAppointmentItem[] = todayAppts.map((a) => ({
+    const queueItems: SubSlotQueueItem[] = todayAppts.map((a) => ({
       id: a.id,
       status: a.status,
       scheduledStart: effectiveSlot(a).start,
@@ -91,9 +94,19 @@ export async function checkAndNotifyQueueDelay(doctorId: string): Promise<number
       actualStartAt: a.actualStartAt,
       actualEndAt: a.actualEndAt,
       checkedInAt: a.checkedInAt,
+      calledAt: a.calledAt,
+      tokenNumber: a.tokenNumber,
+      createdAt: a.createdAt,
+      queueScopeKey:
+        a.queueScopeKey ??
+        buildSubSlotQueueScopeKey({
+          doctorId: a.availability.doctorId,
+          startTime: a.availability.startTime,
+          availabilityId: a.availabilityId,
+        }),
     }));
 
-    const estimates = calculateQueueEstimates(queueItems, now);
+    const { estimates } = calculateSubSlotQueues(queueItems, now);
     let notifiedCount = 0;
 
     for (const appt of todayAppts) {
