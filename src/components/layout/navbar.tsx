@@ -10,7 +10,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { Activity, Menu, Stethoscope, LayoutDashboard, Waves, CalendarOff } from "lucide-react";
+import { Activity, CalendarOff, ClipboardCheck, Menu, Stethoscope, LayoutDashboard, Waves } from "lucide-react";
 import { type NavUser, toNavUser, type SerializedNotification } from "@/lib/serializers";
 
 interface NavbarProps {
@@ -33,6 +33,8 @@ export function Navbar({
       ? "/doctor/dashboard"
       : navUser?.role === "ADMIN"
       ? "/admin/dashboard"
+      : navUser?.role === "RECEPTIONIST"
+      ? "/receptionist"
       : "/onboarding";
 
   const navLinks = [
@@ -146,6 +148,16 @@ export function Navbar({
               </Link>
             </>
           )}
+
+          {navUser?.role === "RECEPTIONIST" && (
+            <Link
+              href="/receptionist"
+              className="text-sm font-semibold text-teal-600 dark:text-teal-400 hover:opacity-80 transition-opacity flex items-center gap-1"
+            >
+              <ClipboardCheck className="h-3.5 w-3.5" />
+              <span>Reception Desk</span>
+            </Link>
+          )}
         </nav>
 
         {/* Right Section: Notification Bell, Auth & Mobile Menu */}
@@ -257,6 +269,16 @@ export function Navbar({
                         Payments
                       </Link>
                     </>
+                  )}
+
+                  {navUser?.role === "RECEPTIONIST" && (
+                    <Link
+                      href="/receptionist"
+                      className="text-base font-medium text-teal-600 dark:text-teal-400 py-2 px-1 rounded-md transition-colors flex items-center gap-2"
+                    >
+                      <ClipboardCheck className="h-4 w-4" />
+                      <span>Reception Desk</span>
+                    </Link>
                   )}
 
                   {navUser && (

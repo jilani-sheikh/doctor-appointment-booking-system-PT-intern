@@ -1,373 +1,578 @@
 "use server";
 
 import { requireRole, requireUser } from "@/lib/auth";
+import { markAppointmentArrived } from "@/lib/check-in";
 import { db } from "@/lib/db";
 import {
   Role,
-  DoctorStatus,
   AppointmentStatus,
-  VisitStream,
+  NotificationType,
   Prisma,
 } from "@/generated/prisma/client";
 import {
-  canPatientCheckIn,
-  canDoctorNoShow,
-} from "@/lib/appointment-status";
-import { checkAndNotifyQueueDelay } from "@/lib/notifications";
+  checkAndNotifyQueueDelay,
+  createNotification,
+} from "@/lib/notifications";
 import { syncAppointmentReminders } from "@/lib/notifications/reminders";
-import { revalidatePath } from "next/cache";
+import {
+  executeCallNextPatient,
+  executeMarkCompleted,
+  executeMarkNotArrived,
+  executeStartConsultation,
+  type StaffOutcomeTxAdapter,
+} from "@/lib/queue-actions-core";
+import { formatDoctorDisplayName } from "@/lib/queue-tokens";
 import { effectiveSlot } from "@/lib/scheduling";
+import { revalidatePath } from "next/cache";
 
-/**
- * Patient self-check-in for their own confirmed appointment.
- * Permitted strictly from 30 minutes before slot start until slot end.
- * Uses conditional update (WHERE status = CONFIRMED) so duplicate clicks are safe.
- */
-export async function patientCheckInAction(appointmentId: string) {
-  const user = await requireRole(Role.PATIENT);
-  if (!user.patient) {
-    return { success: false, error: "Patient profile not found." };
-  }
+function revalidateAllQueuePortals() {
+  revalidatePath("/receptionist");
+  revalidatePath("/doctor/queue");
+  revalidatePath("/doctor/appointments");
+  revalidatePath("/doctor/dashboard");
+  revalidatePath("/patient/appointments");
+  revalidatePath("/patient/dashboard");
+  revalidatePath("/notifications");
+}
 
-  const appointment = await db.appointment.findUnique({
-    where: { id: appointmentId },
-    include: { availability: true },
-  });
-
-  if (!appointment || appointment.patientId !== user.patient.id) {
-    return { success: false, error: "Appointment not found or unauthorized." };
-  }
-
-  const checkInEval = canPatientCheckIn({
-    status: appointment.status,
-    startTime: effectiveSlot(appointment).start,
-    endTime: effectiveSlot(appointment).end,
-  });
-
-  if (!checkInEval.allowed) {
-    return { success: false, error: checkInEval.reason ?? "Check-in is not permitted at this time." };
-  }
-
-  try {
-    const updated = await db.appointment.updateMany({
-      where: {
-        id: appointmentId,
-        status: AppointmentStatus.CONFIRMED,
-        patientId: user.patient.id,
-      },
-      data: {
-        status: AppointmentStatus.CHECKED_IN,
-        checkedInAt: new Date(),
-        checkedInByUserId: user.id,
-      },
-    });
-
-    if (updated.count === 0) {
-      return { success: false, error: "Appointment could not be checked in. Please refresh." };
-    }
-
-    // Skip remaining reminders since patient has checked in
-    await syncAppointmentReminders(db, {
+function buildPrismaStaffOutcomeAdapter(
+  tx: Prisma.TransactionClient
+): StaffOutcomeTxAdapter {
+  return {
+    async lockDoctor(doctorId) {
+      await tx.$queryRaw`SELECT id FROM doctors WHERE id = ${doctorId} FOR UPDATE`;
+    },
+    async findAppointment(appointmentId) {
+      const appt = await tx.appointment.findUnique({
+        where: { id: appointmentId },
+        include: {
+          availability: true,
+          patient: { select: { userId: true } },
+        },
+      });
+      if (!appt) return null;
+      return {
+        id: appt.id,
+        doctorId: appt.availability.doctorId,
+        availabilityId: appt.availabilityId,
+        patientUserId: appt.patient.userId,
+        status: appt.status,
+        slotStartTime: effectiveSlot(appt).start,
+        actualStartAt: appt.actualStartAt,
+        actualEndAt: appt.actualEndAt,
+      };
+    },
+    async findActiveInConsultationOnDay({
+      doctorId,
+      dayStart,
+      nextDayStart,
+      excludeAppointmentId,
+    }) {
+      return await tx.appointment.findFirst({
+        where: {
+          id: { not: excludeAppointmentId },
+          availability: {
+            doctorId,
+            startTime: { gte: dayStart, lt: nextDayStart },
+          },
+          status: AppointmentStatus.IN_CONSULTATION,
+        },
+        select: { id: true },
+      });
+    },
+    async conditionalStartConsultation({ appointmentId, actualStartAt }) {
+      const res = await tx.appointment.updateMany({
+        where: {
+          id: appointmentId,
+          status: AppointmentStatus.CALLED,
+        },
+        data: {
+          status: AppointmentStatus.IN_CONSULTATION,
+          actualStartAt,
+        },
+      });
+      return res.count;
+    },
+    async conditionalMarkNoShow({ appointmentId, noShowAt, noShowByUserId }) {
+      const res = await tx.appointment.updateMany({
+        where: {
+          id: appointmentId,
+          status: {
+            in: [
+              AppointmentStatus.CONFIRMED,
+              AppointmentStatus.CHECKED_IN,
+              AppointmentStatus.CALLED,
+            ],
+          },
+        },
+        data: {
+          status: AppointmentStatus.NO_SHOW,
+          noShowAt,
+          noShowByUserId,
+        },
+      });
+      return res.count;
+    },
+    async conditionalMarkCompleted({
       appointmentId,
-      userId: user.id,
-      slotStartTime: effectiveSlot(appointment).start,
-      status: AppointmentStatus.CHECKED_IN,
-    });
+      completedAt,
+      completedByUserId,
+      actualStartAt,
+      actualEndAt,
+    }) {
+      const res = await tx.appointment.updateMany({
+        where: {
+          id: appointmentId,
+          status: AppointmentStatus.IN_CONSULTATION,
+        },
+        data: {
+          status: AppointmentStatus.COMPLETED,
+          completedAt,
+          completedByUserId,
+          actualStartAt,
+          actualEndAt,
+        },
+      });
+      return res.count;
+    },
+    async syncReminders({ appointmentId, userId, slotStartTime, status }) {
+      await syncAppointmentReminders(tx, {
+        appointmentId,
+        userId,
+        slotStartTime,
+        status,
+      });
+    },
+  };
+}
 
-    revalidatePath("/patient/appointments");
-    revalidatePath("/patient/dashboard");
-    revalidatePath("/doctor/queue");
-    revalidatePath("/doctor/appointments");
-
-    return { success: true, message: "You have successfully checked in! The doctor will see you shortly." };
-  } catch (error) {
-    console.error("[patientCheckInAction] Error checking in:", error);
-    return { success: false, error: "An unexpected error occurred during check-in." };
-  }
+export interface ReceptionistQueueScopeContext {
+  expectedDoctorId?: string;
+  expectedAvailabilityId?: string;
 }
 
 /**
- * Doctor or Admin override to mark a patient as arrived.
+ * Patient self-check-in for their own confirmed appointment.
+ * Delegates to the shared atomic check-in service (preserving the strict 30m window).
  */
-export async function doctorMarkArrivedAction(appointmentId: string) {
-  const user = await requireUser();
-  if (user.role !== Role.DOCTOR && user.role !== Role.ADMIN) {
-    return { success: false, error: "Unauthorized." };
+export async function patientCheckInAction(appointmentId: string) {
+  const user = await requireRole(Role.PATIENT);
+  const res = await markAppointmentArrived({ appointmentId, actor: user });
+  if (res.success) {
+    revalidateAllQueuePortals();
   }
+  return res;
+}
 
-  const appointment = await db.appointment.findUnique({
-    where: { id: appointmentId },
-    include: { availability: true },
+/**
+ * Receptionist Check-In action reusing the shared atomic check-in service.
+ */
+export async function receptionistMarkArrivedAction(
+  appointmentId: string,
+  context?: ReceptionistQueueScopeContext
+) {
+  const user = await requireRole(Role.RECEPTIONIST);
+  const res = await markAppointmentArrived({
+    appointmentId,
+    actor: user,
+    expectedDoctorId: context?.expectedDoctorId,
+    expectedAvailabilityId: context?.expectedAvailabilityId,
   });
-
-  if (!appointment) {
-    return { success: false, error: "Appointment not found." };
+  if (res.success) {
+    revalidateAllQueuePortals();
   }
+  return res;
+}
 
-  if (user.role === Role.DOCTOR) {
-    if (!user.doctor || user.doctor.status !== DoctorStatus.APPROVED) {
-      return { success: false, error: "Approved doctor status required." };
-    }
-    if (appointment.availability.doctorId !== user.doctor.id) {
-      return { success: false, error: "Unauthorized to manage this consultation." };
-    }
-  }
+/**
+ * Receptionist action: Call Next Patient in a selected doctor's sub-slot queue.
+ * - Requires explicit doctorId & availabilityId verified against DB ownership.
+ * - Serializes via doctor row FOR UPDATE + conditional CHECKED_IN -> CALLED transition.
+ * - Prevents duplicate concurrent calls or calling while another patient is CALLED / IN_CONSULTATION.
+ * - Records calledAt + calledByUserId and notifies Patient + attending Doctor.
+ */
+export async function receptionistCallNextPatientAction(input: {
+  doctorId: string;
+  availabilityId: string;
+  queueScopeKey?: string;
+}) {
+  const user = await requireRole(Role.RECEPTIONIST);
 
-  if (appointment.status !== AppointmentStatus.CONFIRMED) {
+  const doctorId = input.doctorId?.trim() || "";
+  const availabilityId = input.availabilityId?.trim() || "";
+
+  if (!doctorId || !availabilityId) {
     return {
       success: false,
-      error: `Only confirmed appointments can be marked as arrived. Current status: ${appointment.status}.`,
+      error: "Please select a doctor and sub-slot queue before calling the next patient.",
     };
   }
 
   try {
-    await db.appointment.update({
-      where: { id: appointmentId },
-      data: {
-        status: AppointmentStatus.CHECKED_IN,
-        checkedInAt: new Date(),
-        checkedInByUserId: user.id,
-      },
-    });
-
-    revalidatePath("/doctor/queue");
-    revalidatePath("/doctor/appointments");
-    revalidatePath("/patient/appointments");
-    revalidatePath("/patient/dashboard");
-
-    return { success: true, message: "Patient arrival recorded successfully." };
-  } catch (error) {
-    console.error("[doctorMarkArrivedAction] Error marking arrival:", error);
-    return { success: false, error: "Failed to record patient arrival." };
-  }
-}
-
-/**
- * Starts a consultation for a checked-in patient.
- *
- * Concurrency Safety (Promt5.md Amendment 3):
- * Runs in a short transaction with maxWait: 10000, timeout: 20000.
- * 1. Locks the doctor row via `SELECT id FROM doctors WHERE id = $1 FOR UPDATE`.
- * 2. Asserts doctor has NO appointment currently in IN_CONSULTATION status.
- * 3. Conditionally updates appointment (WHERE status = CHECKED_IN).
- * 4. Triggers QUEUE_DELAY notification post-commit if delay exceeds 20 minutes.
- */
-export async function startConsultationAction(appointmentId: string) {
-  const user = await requireRole(Role.DOCTOR);
-  const doctor = user.doctor;
-
-  if (!doctor || doctor.status !== DoctorStatus.APPROVED) {
-    return { success: false, error: "Only approved doctors can conduct consultations." };
-  }
-
-  try {
-    await db.$transaction(
+    const txResult = await db.$transaction(
       async (tx) => {
-        // 1. Lock doctor row for update to serialize start requests for this practitioner
-        await tx.$queryRaw`SELECT id FROM doctors WHERE id = ${doctor.id} FOR UPDATE`;
-
-        // 2. Check for active consultation in progress
-        const activeConsultation = await tx.appointment.findFirst({
-          where: {
-            availability: { doctorId: doctor.id },
-            status: AppointmentStatus.IN_CONSULTATION,
+        return await executeCallNextPatient({
+          tx: {
+            async findDoctor(docId) {
+              const doc = await tx.doctor.findUnique({
+                where: { id: docId },
+                include: { user: { select: { name: true } } },
+              });
+              if (!doc) return null;
+              return {
+                id: doc.id,
+                userId: doc.userId,
+                status: doc.status,
+                name: doc.user.name,
+              };
+            },
+            async lockDoctor(docId) {
+              await tx.$queryRaw`SELECT id FROM doctors WHERE id = ${docId} FOR UPDATE`;
+            },
+            async findAvailability(availId) {
+              return await tx.availability.findUnique({
+                where: { id: availId },
+                select: {
+                  id: true,
+                  doctorId: true,
+                  kind: true,
+                  startTime: true,
+                  endTime: true,
+                },
+              });
+            },
+            async findActiveDoctorCallOnDay({ doctorId: docId, dayStart, nextDayStart }) {
+              const active = await tx.appointment.findFirst({
+                where: {
+                  availability: {
+                    doctorId: docId,
+                    startTime: { gte: dayStart, lt: nextDayStart },
+                  },
+                  status: {
+                    in: [
+                      AppointmentStatus.CALLED,
+                      AppointmentStatus.IN_CONSULTATION,
+                    ],
+                  },
+                },
+                include: {
+                  patient: {
+                    include: {
+                      user: { select: { name: true } },
+                    },
+                  },
+                },
+              });
+              if (!active) return null;
+              return {
+                id: active.id,
+                status: active.status,
+                tokenNumber: active.tokenNumber,
+                patientName: active.patient.user.name,
+              };
+            },
+            async findSubSlotCheckedInCandidates(availId) {
+              const rows = await tx.appointment.findMany({
+                where: {
+                  availabilityId: availId,
+                  status: AppointmentStatus.CHECKED_IN,
+                },
+                include: {
+                  patient: {
+                    include: {
+                      user: { select: { id: true, name: true } },
+                    },
+                  },
+                },
+              });
+              return rows.map((row) => ({
+                id: row.id,
+                status: row.status,
+                tokenNumber: row.tokenNumber,
+                checkedInAt: row.checkedInAt,
+                createdAt: row.createdAt,
+                actualStartAt: row.actualStartAt,
+                slotStart: row.slotStart,
+                slotEnd: row.slotEnd,
+                patientUserId: row.patient.userId,
+                patientName: row.patient.user.name,
+              }));
+            },
+            async conditionalMarkCalled({
+              appointmentId,
+              calledAt,
+              calledByUserId,
+            }) {
+              const updated = await tx.appointment.updateMany({
+                where: {
+                  id: appointmentId,
+                  status: AppointmentStatus.CHECKED_IN,
+                  availability: { id: availabilityId, doctorId },
+                },
+                data: {
+                  status: AppointmentStatus.CALLED,
+                  calledAt,
+                  calledByUserId,
+                },
+              });
+              return updated.count;
+            },
+            async syncReminders({ appointmentId, userId, slotStartTime, status }) {
+              await syncAppointmentReminders(tx, {
+                appointmentId,
+                userId,
+                slotStartTime,
+                status,
+              });
+            },
           },
+          actor: {
+            id: user.id,
+            role: Role.RECEPTIONIST,
+          },
+          doctorId,
+          availabilityId,
+          queueScopeKey: input.queueScopeKey,
         });
-
-        if (activeConsultation) {
-          throw new Error("ACTIVE_CONSULTATION_IN_PROGRESS");
-        }
-
-        // 3. Conditionally start consultation
-        const updated = await tx.appointment.updateMany({
-          where: {
-            id: appointmentId,
-            status: AppointmentStatus.CHECKED_IN,
-            availability: { doctorId: doctor.id },
-          },
-          data: {
-            status: AppointmentStatus.IN_CONSULTATION,
-            actualStartAt: new Date(),
-          },
-        });
-
-        if (updated.count !== 1) {
-          throw new Error("PATIENT_NOT_CHECKED_IN");
-        }
       },
       { maxWait: 10000, timeout: 20000 }
     );
 
-    // After transaction commits, check for delay notifications
-    await checkAndNotifyQueueDelay(doctor.id);
+    if (!txResult.success) {
+      return { success: false, error: txResult.error };
+    }
 
-    revalidatePath("/doctor/queue");
-    revalidatePath("/doctor/appointments");
-    revalidatePath("/doctor/dashboard");
-    revalidatePath("/patient/appointments");
-    revalidatePath("/patient/dashboard");
+    // Best-effort post-commit notifications to Patient & attending Doctor
+    try {
+      const doctorLabel = formatDoctorDisplayName(txResult.doctorName);
+      const tokenNote =
+        typeof txResult.tokenNumber === "number"
+          ? `Token #${txResult.tokenNumber}`
+          : "Your turn";
 
+      if (txResult.patientUserId) {
+        await createNotification({
+          userId: txResult.patientUserId,
+          type: NotificationType.QUEUE_CALLED,
+          title: `You are called — ${tokenNote}`,
+          body: `Reception Desk called you for ${doctorLabel} (${txResult.subSlotLabel ?? "Scheduled Sub-slot"}). Please proceed to the consultation room.`,
+          href: "/patient/appointments",
+        });
+      }
+
+      if (txResult.doctorUserId && txResult.notification) {
+        await createNotification({
+          userId: txResult.doctorUserId,
+          type: NotificationType.QUEUE_CALLED,
+          title: txResult.notification.title,
+          body: txResult.notification.body,
+          href: "/doctor/queue",
+        });
+      }
+
+      if (txResult.doctorId) {
+        await checkAndNotifyQueueDelay(txResult.doctorId);
+      }
+    } catch (notifError) {
+      console.error("[receptionistCallNextPatientAction] Post-commit notification error:", notifError);
+    }
+
+    revalidateAllQueuePortals();
+
+    const tokenLabel =
+      typeof txResult.tokenNumber === "number" ? `Token #${txResult.tokenNumber}` : "Next patient";
+    return {
+      success: true,
+      appointmentId: txResult.appointmentId,
+      tokenNumber: txResult.tokenNumber ?? null,
+      message: `Called ${txResult.patientName ?? "Patient"} (${tokenLabel}) for ${formatDoctorDisplayName(txResult.doctorName)}.`,
+    };
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028") {
+      console.error("[receptionistCallNextPatientAction] Transaction timeout (P2028):", error);
+      return { success: false, error: "The operation timed out. Please try again." };
+    }
+    console.error("[receptionistCallNextPatientAction] Error:", error);
+    return { success: false, error: "Failed to call next patient." };
+  }
+}
+
+/**
+ * Receptionist action: Start Consultation (CALLED -> IN_CONSULTATION).
+ * Stamps `actualStartAt` and triggers delay evaluation cleanly.
+ */
+export async function receptionistStartConsultationAction(
+  appointmentId: string,
+  context?: ReceptionistQueueScopeContext
+) {
+  const user = await requireRole(Role.RECEPTIONIST);
+
+  try {
+    const res = await db.$transaction(
+      async (tx) =>
+        await executeStartConsultation({
+          tx: buildPrismaStaffOutcomeAdapter(tx),
+          actor: { id: user.id, role: Role.RECEPTIONIST },
+          appointmentId,
+          expectedDoctorId: context?.expectedDoctorId,
+          expectedAvailabilityId: context?.expectedAvailabilityId,
+        }),
+      { maxWait: 10000, timeout: 20000 }
+    );
+
+    if (!res.success) {
+      return { success: false, error: res.error };
+    }
+
+    if (res.doctorId) {
+      await checkAndNotifyQueueDelay(res.doctorId);
+    }
+
+    revalidateAllQueuePortals();
     return { success: true, message: "Consultation started." };
   } catch (error) {
-    if (error instanceof Error) {
-      if (error.message === "ACTIVE_CONSULTATION_IN_PROGRESS") {
-        return {
-          success: false,
-          error: "You already have a consultation in progress. Please complete it before starting the next.",
-        };
-      }
-      if (error.message === "PATIENT_NOT_CHECKED_IN") {
-        return {
-          success: false,
-          error: "Patient must be checked in before consultation can start.",
-        };
-      }
-    }
-
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === "P2028") {
-        console.error("[startConsultationAction] Transaction timeout error (P2028):", error);
-        return { success: false, error: "The operation timed out. Please try again." };
-      }
-    }
-
-    console.error("[startConsultationAction] Error starting consultation:", error);
+    console.error("[receptionistStartConsultationAction] Error:", error);
     return { success: false, error: "Failed to start consultation." };
   }
 }
 
 /**
- * Ends an in-progress consultation, setting status to COMPLETED and recording actualEndAt.
+ * Receptionist action: Mark an eligible appointment as Not Arrived (NO_SHOW).
+ * Enforces 15-minute grace period and preserves existing token numbers in the queue.
  */
+export async function receptionistMarkNotArrivedAction(
+  appointmentId: string,
+  context?: ReceptionistQueueScopeContext
+) {
+  const user = await requireRole(Role.RECEPTIONIST);
+
+  try {
+    const res = await db.$transaction(
+      async (tx) =>
+        await executeMarkNotArrived({
+          tx: buildPrismaStaffOutcomeAdapter(tx),
+          actor: { id: user.id, role: Role.RECEPTIONIST },
+          appointmentId,
+          expectedDoctorId: context?.expectedDoctorId,
+          expectedAvailabilityId: context?.expectedAvailabilityId,
+        }),
+      { maxWait: 10000, timeout: 20000 }
+    );
+
+    if (!res.success) {
+      return { success: false, error: res.error };
+    }
+
+    if (res.doctorId) {
+      await checkAndNotifyQueueDelay(res.doctorId);
+    }
+
+    revalidateAllQueuePortals();
+    return { success: true, message: "Appointment marked as Not Arrived (No-Show)." };
+  } catch (error) {
+    console.error("[receptionistMarkNotArrivedAction] Error:", error);
+    return { success: false, error: "Failed to mark appointment as Not Arrived." };
+  }
+}
+
+/**
+ * Receptionist action: Complete an IN_CONSULTATION appointment (IN_CONSULTATION -> COMPLETED).
+ * Records completion timestamp, actualEndAt, and receptionist user audit identity.
+ */
+export async function receptionistMarkCompletedAction(
+  appointmentId: string,
+  context?: ReceptionistQueueScopeContext
+) {
+  const user = await requireRole(Role.RECEPTIONIST);
+
+  try {
+    const res = await db.$transaction(
+      async (tx) =>
+        await executeMarkCompleted({
+          tx: buildPrismaStaffOutcomeAdapter(tx),
+          actor: { id: user.id, role: Role.RECEPTIONIST },
+          appointmentId,
+          expectedDoctorId: context?.expectedDoctorId,
+          expectedAvailabilityId: context?.expectedAvailabilityId,
+        }),
+      { maxWait: 10000, timeout: 20000 }
+    );
+
+    if (!res.success) {
+      return { success: false, error: res.error };
+    }
+
+    if (res.doctorId) {
+      await checkAndNotifyQueueDelay(res.doctorId);
+    }
+
+    revalidateAllQueuePortals();
+    return { success: true, message: "Consultation marked as Completed." };
+  } catch (error) {
+    console.error("[receptionistMarkCompletedAction] Error:", error);
+    return { success: false, error: "Failed to mark consultation as Completed." };
+  }
+}
+
+/**
+ * Retired / forbidden Doctor queue-mutation actions.
+ * The Doctor Portal is strictly read-only for queue & consultation operations;
+ * direct invocation by a Doctor (or other unauthorized caller) is rejected server-side.
+ */
+export async function callNextPatientAction(input: {
+  doctorId?: string;
+  availabilityId?: string;
+  queueScopeKey?: string;
+}) {
+  void input;
+  await requireUser();
+  return {
+    success: false,
+    error: "Unauthorized: Doctors have read-only queue access. Call Next Patient is managed from the Receptionist Portal.",
+  };
+}
+
+export async function doctorMarkArrivedAction(appointmentId: string) {
+  void appointmentId;
+  await requireUser();
+  return {
+    success: false,
+    error: "Unauthorized: Clinic check-in is managed by the Receptionist Portal or patient self-check-in.",
+  };
+}
+
+export async function startConsultationAction(appointmentId: string) {
+  void appointmentId;
+  await requireUser();
+  return {
+    success: false,
+    error: "Unauthorized: Start Consultation is managed from the Receptionist Portal.",
+  };
+}
+
 export async function endConsultationAction(appointmentId: string) {
-  const user = await requireRole(Role.DOCTOR);
-  const doctor = user.doctor;
-
-  if (!doctor || doctor.status !== DoctorStatus.APPROVED) {
-    return { success: false, error: "Only approved doctors can conclude consultations." };
-  }
-
-  try {
-    const updated = await db.appointment.updateMany({
-      where: {
-        id: appointmentId,
-        status: AppointmentStatus.IN_CONSULTATION,
-        availability: { doctorId: doctor.id },
-      },
-      data: {
-        status: AppointmentStatus.COMPLETED,
-        actualEndAt: new Date(),
-      },
-    });
-
-    if (updated.count !== 1) {
-      return { success: false, error: "Consultation is not in progress or unauthorized." };
-    }
-
-    // After completion, notify downstream patients if queue delays remain
-    await checkAndNotifyQueueDelay(doctor.id);
-
-    revalidatePath("/doctor/queue");
-    revalidatePath("/doctor/appointments");
-    revalidatePath("/doctor/dashboard");
-    revalidatePath("/patient/appointments");
-    revalidatePath("/patient/dashboard");
-
-    return { success: true, message: "Consultation completed successfully." };
-  } catch (error) {
-    console.error("[endConsultationAction] Error ending consultation:", error);
-    return { success: false, error: "Failed to record consultation completion." };
-  }
+  void appointmentId;
+  await requireUser();
+  return {
+    success: false,
+    error: "Unauthorized: Consultation completion is managed from the Receptionist Portal.",
+  };
 }
 
-/**
- * Records an appointment as a No-Show.
- * Enforces scheduled start time + 15 minute grace period.
- */
 export async function doctorNoShowAction(appointmentId: string) {
-  const user = await requireRole(Role.DOCTOR);
-  const doctor = user.doctor;
-
-  if (!doctor || doctor.status !== DoctorStatus.APPROVED) {
-    return { success: false, error: "Only approved doctors can record outcomes." };
-  }
-
-  const appointment = await db.appointment.findUnique({
-    where: { id: appointmentId },
-    include: { availability: true },
-  });
-
-  if (!appointment || appointment.availability.doctorId !== doctor.id) {
-    return { success: false, error: "Appointment not found or unauthorized." };
-  }
-
-  const noShowEval = canDoctorNoShow({
-    status: appointment.status,
-    startTime: effectiveSlot(appointment).start,
-  });
-
-  if (!noShowEval.allowed) {
-    return { success: false, error: noShowEval.reason ?? "No-Show cannot be recorded yet." };
-  }
-
-  try {
-    await db.appointment.update({
-      where: { id: appointmentId },
-      data: {
-        status: AppointmentStatus.NO_SHOW,
-      },
-    });
-
-    revalidatePath("/doctor/queue");
-    revalidatePath("/doctor/appointments");
-    revalidatePath("/doctor/dashboard");
-    revalidatePath("/patient/appointments");
-
-    return { success: true, message: "Appointment recorded as No-Show." };
-  } catch (error) {
-    console.error("[doctorNoShowAction] Error marking no-show:", error);
-    return { success: false, error: "Failed to record no-show." };
-  }
+  void appointmentId;
+  await requireUser();
+  return {
+    success: false,
+    error: "Unauthorized: Not Arrived (No-Show) is managed from the Receptionist Portal.",
+  };
 }
 
-/**
- * Doctor or Admin action to designate an appointment's stream as PRIORITY (Amendment 5c).
- * Never accessible to patients (enforced server-side).
- */
 export async function setPriorityStreamAction(appointmentId: string) {
-  const user = await requireUser();
-  if (user.role !== Role.DOCTOR && user.role !== Role.ADMIN) {
-    return { success: false, error: "Only doctors and administrators can assign Priority stream." };
-  }
-
-  const appointment = await db.appointment.findUnique({
-    where: { id: appointmentId },
-    include: { availability: true },
-  });
-
-  if (!appointment) {
-    return { success: false, error: "Appointment not found." };
-  }
-
-  if (user.role === Role.DOCTOR) {
-    if (!user.doctor || appointment.availability.doctorId !== user.doctor.id) {
-      return { success: false, error: "Unauthorized to modify this consultation." };
-    }
-  }
-
-  try {
-    await db.appointment.update({
-      where: { id: appointmentId },
-      data: { stream: VisitStream.PRIORITY },
-    });
-
-    revalidatePath("/doctor/queue");
-    revalidatePath("/doctor/appointments");
-    revalidatePath("/doctor/arrival-windows");
-
-    return { success: true, message: "Appointment stream updated to Priority." };
-  } catch (error) {
-    console.error("[setPriorityStreamAction] Error:", error);
-    return { success: false, error: "Failed to update appointment stream." };
-  }
+  void appointmentId;
+  await requireUser();
+  return {
+    success: false,
+    error: "Unauthorized: Manual queue priority reordering is disabled.",
+  };
 }
